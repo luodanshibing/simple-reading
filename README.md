@@ -55,6 +55,8 @@ An EPUB is a ZIP of XHTML. Instead of bundling a ZIP library, this plugin uses *
 | 复制同名读书笔记路径 | For when the note does not exist yet |
 | 打开当前笔记对应的原书（PDF / EPUB） | From a note back to the book |
 
+In the built-in EPUB reader, **select text and right-click** — the menu offers 摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接, the same set of actions you get from Obsidian's own PDF viewer (those PDF menu items are core Obsidian, not added by this plugin).
+
 `.epub` files open in the built-in reader by default (the extension is registered to this view), so a click in the file explorer just works.
 
 ### Settings
@@ -157,6 +159,8 @@ EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用
 | 打开同名读书笔记 | 打开书旁边的 `书.md` |
 | 复制同名读书笔记路径 | 笔记还不存在时用 |
 | 打开当前笔记对应的原书（PDF / EPUB） | 从笔记反查书 |
+
+在内置 EPUB 阅读器里**选中文字后右键**，菜单里有：摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接 —— 与 PDF 那边的右键动作对齐（注：PDF 那三条菜单是 **Obsidian 自带**的，不是本插件加的）。
 
 `.epub` 默认就用内置阅读器打开（已把扩展名注册给这个视图），文件浏览器里点一下即可。
 

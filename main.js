@@ -30,7 +30,7 @@
  * ========================================================================== */
 
 const obsidian = require('obsidian');
-const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, FileView, normalizePath } = obsidian;
+const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, FileView, Menu, normalizePath } = obsidian;
 
 const VIEW_TYPE = 'simple-reading-epub';
 const EPUB_EXT = 'epub';
@@ -129,6 +129,16 @@ function resolveNotePath(sourcePath, settings) {
 }
 
 /** 多行选中文本 → 每行加 `> `（callout 里要逐行引用） */
+/** 原书链接（含位置描述），复制/引用都用它 */
+function sourceLinkText(sourcePath, locator) {
+  const link = `[[${String(sourcePath == null ? '' : sourcePath)}]]`;
+  return locator ? `${link} · ${locator}` : link;
+}
+
+/** 「复制为引用」用的纯文本（与写进笔记的形态一致，但不带 callout 头） */
+function buildQuote(text, sourcePath, locator) {
+  return [quoteLines(text), '>', `> — ${sourceLinkText(sourcePath, locator)}`].join('\n');
+}
 function quoteLines(text) {
   return String(text == null ? '' : text)
     .replace(/\r\n?/g, '\n')
@@ -517,14 +527,21 @@ class SimpleReadingPlugin extends Plugin {
     return { path: notePath, file: file, text: await this.app.vault.read(file) };
   }
 
-  /** 核心：把摘录 / 想法写进同名读书笔记 */
-  async annotate(kind) {
-    const source = this.currentSourceFile();
-    if (!source) {
+  /**
+   * 核心：把摘录 / 想法写进同名读书笔记。
+   * preset 由 EPUB 视图的右键菜单传入（{ text, locator, sourcePath }）——
+   * 免得依赖"点菜单那一刻"的全局选区（右键有可能把选区清掉）。
+   */
+  async annotate(kind, preset) {
+    const p = preset || {};
+    const source = p.sourcePath
+      ? this.app.vault.getAbstractFileByPath(normalizePath(p.sourcePath))
+      : this.currentSourceFile();
+    if (!source || !(source instanceof TFile)) {
       new Notice('请先打开一个 PDF 或 EPUB（本插件按当前文件找同名读书笔记）');
       return;
     }
-    const sel = this.readSelection();
+    const sel = p.text || p.locator ? { text: p.text || '', locator: p.locator || '' } : this.readSelection();
     const isIdea = kind === 'idea';
     if (!isIdea && !sel.text) {
       new Notice('没有选中文字：先用鼠标选中 PDF / EPUB 里的文字再执行');
@@ -664,6 +681,45 @@ class EpubView extends FileView {
     }
   }
 
+  /** 当前位置的文字描述（有目录名就用目录名，更有辨识度） */
+  currentLocator() {
+    const i = this.chapter;
+    const label = this.book && this.book.labels && this.book.labels[i] ? this.book.labels[i].label : '';
+    return label ? `第 ${i + 1} 章 · ${label}` : `第 ${i + 1} 章`;
+  }
+
+  /**
+   * 选中文字后右键的菜单。
+   * 没选中就把事件交回 Obsidian 默认菜单（不劫持普通右键）。
+   */
+  openSelectionMenu(evt) {
+    const sel = this.plugin.readSelection();
+    if (!sel.text) return;
+    const preset = {
+      text: sel.text,
+      locator: this.currentLocator(),
+      sourcePath: this.file ? this.file.path : '',
+    };
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle('摘录到读书笔记').setIcon('quote-glyph').onClick(() => this.plugin.annotate('quote', preset)));
+    menu.addItem((i) => i.setTitle('记录想法到读书笔记').setIcon('pencil').onClick(() => this.plugin.annotate('idea', preset)));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle('复制').setIcon('copy').onClick(() => this.copyToClipboard(sel.text)));
+    menu.addItem((i) => i.setTitle('复制为引用').setIcon('quote-glyph').onClick(() => this.copyToClipboard(buildQuote(sel.text, preset.sourcePath, preset.locator))));
+    menu.addItem((i) => i.setTitle('复制原书链接').setIcon('link').onClick(() => this.copyToClipboard(sourceLinkText(preset.sourcePath, preset.locator))));
+    evt.preventDefault();
+    menu.showAtMouseEvent(evt);
+  }
+
+  copyToClipboard(text) {
+    if (navigator && navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        () => new Notice('已复制'),
+        () => new Notice('复制失败（剪贴板不可用）')
+      );
+    }
+  }
+
   /** 把书名与章节下拉填回界面（重建界面后调用） */
   restoreShell() {
     if (!this.book) return;
@@ -725,6 +781,8 @@ class EpubView extends FileView {
     this.nextBtn = nav.createEl('button', { text: '下一章 ›', cls: 'sr-btn' });
     this.nextBtn.addEventListener('click', () => this.goto(this.chapter + 1));
     this.stageEl = root.createDiv({ cls: 'sr-stage' });
+    // 选中文字后右键：与 PDF 那边一样，能直接摘录 / 想法 / 复制
+    this.stageEl.addEventListener('contextmenu', (evt) => this.openSelectionMenu(evt));
     this.stageEl.style.setProperty('--sr-font-size', `${this.plugin.settings.epubFontSize}px`);
     this.stageEl.style.setProperty('--sr-max-width', `${this.plugin.settings.epubMaxWidth}px`);
     this.stageEl.style.setProperty('--sr-line-height', String(this.plugin.settings.epubLineHeight));
@@ -973,7 +1031,8 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       cls: 'setting-item-description',
       text:
         'PDF 用 Obsidian 自带阅读器，本插件只读取你的选区；EPUB 用内置的极简阅读器（解压走浏览器自带的 DecompressionStream，零依赖）。' +
-        '原 PDF / EPUB 一个字节都不改 —— 划线、高亮、想法全部以 Markdown 文本写进同名读书笔记，随时可删，插件可随时卸载。',
+        '原 PDF / EPUB 一个字节都不改 —— 划线、高亮、想法全部以 Markdown 文本写进同名读书笔记，随时可删，插件可随时卸载。' +
+        'EPUB 视图里选中文字后右键，可直接摘录 / 记录想法 / 复制为引用（和 PDF 那边的右键一致）。',
     });
     containerEl.createEl('p', {
       cls: 'setting-item-description',
@@ -998,6 +1057,8 @@ module.exports.__test = {
   resolveHref,
   resolveNotePath,
   quoteLines,
+  sourceLinkText,
+  buildQuote,
   stamp,
   buildAnnotationBlock,
   insertIntoNote,

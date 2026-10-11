@@ -168,3 +168,14 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* 正文强制可选中（有些主题 / 插件会把视图内容设成不可选），选中后右键有摘录菜单 */
+.sr-chapter,
+.sr-chapter * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sr-chapter ::selection {
+  background: var(--text-selection, rgba(127, 109, 242, 0.3));
+}

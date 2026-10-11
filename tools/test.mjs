@@ -65,6 +65,9 @@ ok(!/workspace\.on\(|onLayoutReady/.test(onloadBody), 'onload 不监听 workspac
 ok(/registerView/.test(onloadBody) && /registerExtensions/.test(onloadBody), 'onload 只注册 1 个视图 + 扩展名关联');
 ok(!/setInterval|registerInterval/.test(SRC), '整个源码里没有任何定时器');
 ok(!/registerEvent/.test(SRC), '整个源码里没有事件监听');
+ok(/contextmenu/.test(SRC), 'EPUB 视图注册了右键菜单');
+ok(/new Menu\(\)/.test(SRC), '右键菜单用的是 Obsidian 的 Menu');
+ok(/annotate\(kind, preset\)/.test(SRC), 'annotate 支持传入预设选区');
 /* ---------- 0b. 文件视图必须继承 FileView（2026-10-11 真机白屏事故） ---------- */
 ok(/class EpubView extends FileView/.test(SRC), '视图继承 FileView（继承 ItemView 会拿不到 this.file，视图白屏）');
 ok(!/class EpubView extends ItemView/.test(SRC), '不再继承 ItemView');
@@ -114,6 +117,13 @@ eq(T.quoteLines('第一行\n第二行'), '> 第一行\n> 第二行', '多行逐�
 eq(T.quoteLines('第一行\n\n第三行'), '> 第一行\n>\n> 第三行', '空行变成 >');
 eq(T.quoteLines('  缩进行'), '> 缩进行', '行首空白被去掉');
 eq(T.quoteLines('a\r\nb'), '> a\n> b', 'CRLF 归一');
+eq(T.sourceLinkText('书.epub', '第 3 章'), '[[书.epub]] · 第 3 章', '原书链接（带位置）');
+eq(T.sourceLinkText('书.epub', ''), '[[书.epub]]', '原书链接（无位置）');
+eq(
+  T.buildQuote('第一行\n第二行', '书.epub', '第 3 章'),
+  '> 第一行\n> 第二行\n>\n> — [[书.epub]] · 第 3 章',
+  '复制为引用的格式'
+);
 eq(T.stamp(new Date(2026, 9, 11, 9, 5)), '2026-10-11 09:05', '时间戳补零');
 
 const quote = T.buildAnnotationBlock({
