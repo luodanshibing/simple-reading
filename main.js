@@ -40,7 +40,8 @@ const DEFAULT_SETTINGS = {
   noteFolder: '', // 读书笔记放哪：空 = 与源文件同目录
   insertMode: 'end', // end（文末）| heading（指定标题之下）
   headingText: '摘录', // insertMode = heading 时使用的标题文字
-  sourceLink: true, // 第一条标注时自动补一行来源链接
+  sourceLink: true, // 第一条标注时自动补一行来源链接（插在 frontmatter 之后，不会顶掉 YAML）
+  pdfMenu: true, // 接管 PDF 的右键菜单（Obsidian 没给 PDF 菜单留钩子）
   epubFontSize: 17,
   epubMaxWidth: 720,
   epubLineHeight: 1.8,
@@ -136,7 +137,21 @@ function sourceLinkText(sourcePath, locator) {
 }
 
 /** 「复制为引用」用的纯文本（与写进笔记的形态一致，但不带 callout 头） */
-function buildQuote(text, sourcePath, locator) {
+/** 源文件的页码链接：Obsidian 自带的 PDF 支持 [[书.pdf#page=N]]，点开直接跳到该页 */
+function pdfPageLink(sourcePath, page) {
+  const n = Number(page);
+  if (!Number.isFinite(n) || n <= 0) return `[[${String(sourcePath == null ? '' : sourcePath)}]]`;
+  return `[[${String(sourcePath == null ? '' : sourcePath)}#page=${Math.trunc(n)}]]`;
+}
+
+/**
+ * 位置链接：PDF 用页码链接（能跳页），其他（epub）用「[[源文件]] · 位置」。
+ */
+function locationLink(sourcePath, locator) {
+  const m = /\d+/.exec(String(locator == null ? '' : locator));
+  if (m && extOf(sourcePath) === 'pdf') return pdfPageLink(sourcePath, Number(m[0]));
+  return sourceLinkText(sourcePath, locator);
+}function buildQuote(text, sourcePath, locator) {
   return [quoteLines(text), '>', `> — ${sourceLinkText(sourcePath, locator)}`].join('\n');
 }
 function quoteLines(text) {
@@ -236,13 +251,37 @@ function insertIntoNote(noteText, block, settings) {
   return { text: out, placed: s.insertMode === 'heading' ? 'end-fallback' : 'end' };
 }
 
-/** 第一条标注时补一行来源链接（已有就原样返回） */
+/** frontmatter 结束行之后的下标；没有 / 未闭合返回 0 */
+function frontmatterEnd(lines) {
+  const arr = Array.isArray(lines) ? lines : [];
+  if (!arr.length || arr[0].trim() !== '---') return 0;
+  for (let i = 1; i < arr.length; i += 1) {
+    if (arr[i].trim() === '---') return i + 1;
+  }
+  return 0;
+}
+
+/**
+ * 第一条标注时补一行来源链接（已有就原样返回）。
+ * ⚠️ 必须插在 **frontmatter 之后** —— 插到第 1 行会把 YAML 顶下去，笔记的 frontmatter 直接失效
+ * （2026-10-11 真机事故：读书笔记首行被写进「来源」，YAML 不再从第 1 行开始）。
+ */
 function ensureSourceLink(noteText, source, enabled) {
   const src = String(noteText == null ? '' : noteText);
   if (!enabled) return { text: src, added: false };
   const line = `来源：[[${source}]]`;
   if (src.indexOf(line) >= 0) return { text: src, added: false };
   if (src.indexOf(`[[${source}]]`) >= 0) return { text: src, added: false };
+
+  const lines = src.split('\n');
+  const fmEnd = frontmatterEnd(lines);
+  if (fmEnd > 0) {
+    let at = fmEnd;
+    while (at < lines.length && lines[at].trim() === '') at += 1;
+    const next = lines.slice(0, fmEnd).concat(['', line, '']).concat(lines.slice(at));
+    return { text: `${next.join('\n').replace(/\s+$/, '')}\n`, added: true };
+  }
+
   const body = src.replace(/\s+$/, '');
   const out = body ? `${line}\n\n${body}\n` : `${line}\n`;
   return { text: out, added: true };
@@ -470,6 +509,11 @@ class SimpleReadingPlugin extends Plugin {
     });
 
     this.addSettingTab(new SimpleReadingSettingTab(this.app, this));
+
+    /* PDF 的右键：Obsidian 本体没给 PDF 菜单留钩子（obsidian.asar 里搜不到 pdf-menu 事件），
+       只能接管 .pdf-container 上的 contextmenu，自己搭一个菜单。
+       设置里给了开关（pdfMenu），随时可以退回原生菜单。 */
+    this.registerDomEvent(document, 'contextmenu', (evt) => this.onPdfContextMenu(evt), true);
   }
 
   async loadSettings() {
@@ -532,7 +576,59 @@ class SimpleReadingPlugin extends Plugin {
    * preset 由 EPUB 视图的右键菜单传入（{ text, locator, sourcePath }）——
    * 免得依赖"点菜单那一刻"的全局选区（右键有可能把选区清掉）。
    */
-  async annotate(kind, preset) {
+  /** 右键发生在哪个 PDF 视图里就认哪个 */
+  pdfLeafForTarget(el) {
+    const leaves = this.app.workspace.getLeavesOfType('pdf');
+    for (const leaf of leaves) {
+      if (leaf.view && leaf.view.containerEl && leaf.view.containerEl.contains(el)) return leaf;
+    }
+    return null;
+  }
+
+  /**
+   * 接管 PDF 里的右键。
+   * 为什么必须"接管"：Obsidian 本体没有给 PDF 菜单留钩子（obsidian.asar 里搜 pdf-menu = 0 次，
+   * PDF 右键是 pdf.js 内部建的），插件无法往那个菜单里追加项。
+   * 自带三条无法直接调用，这里用等价项补上：复制 / 复制为引用 / 复制位置链接
+   * （PDF 给出 [[书.pdf#page=N]]，点开能跳页，比坐标式选区链接更好读）。
+   * 想退回原生菜单：设置里关掉「接管 PDF 右键菜单」。
+   */
+  onPdfContextMenu(evt) {
+    if (!this.settings.pdfMenu) return;
+    const target = evt.target;
+    if (!target || typeof target.closest !== 'function') return;
+    if (!target.closest('.pdf-container')) return;
+    const leaf = this.pdfLeafForTarget(target);
+    const file = leaf && leaf.view ? leaf.view.file : null;
+    if (!(file instanceof TFile)) return;
+    const sel = this.readSelection();
+    evt.preventDefault();
+    this.buildAnnotateMenu({ text: sel.text, locator: sel.locator, sourcePath: file.path }).showAtMouseEvent(evt);
+  }
+
+  /** PDF 与 EPUB 共用的标注菜单 */
+  buildAnnotateMenu(preset) {
+    const p = preset || {};
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle('摘录到读书笔记').setIcon('quote-glyph').onClick(() => this.annotate('quote', p)));
+    menu.addItem((i) => i.setTitle('记录想法到读书笔记').setIcon('pencil').onClick(() => this.annotate('idea', p)));
+    menu.addSeparator();
+    if (p.text) {
+      menu.addItem((i) => i.setTitle('复制').setIcon('copy').onClick(() => this.copyToClipboard(p.text)));
+      menu.addItem((i) => i.setTitle('复制为引用').setIcon('quote-glyph').onClick(() => this.copyToClipboard(buildQuote(p.text, p.sourcePath, p.locator))));
+    }
+    menu.addItem((i) => i.setTitle('复制位置链接').setIcon('link').onClick(() => this.copyToClipboard(locationLink(p.sourcePath, p.locator))));
+    return menu;
+  }
+
+  copyToClipboard(text) {
+    if (navigator && navigator.clipboard) {
+      navigator.clipboard.writeText(String(text == null ? '' : text)).then(
+        () => new Notice('已复制'),
+        () => new Notice('复制失败（剪贴板不可用）')
+      );
+    }
+  }  async annotate(kind, preset) {
     const p = preset || {};
     const source = p.sourcePath
       ? this.app.vault.getAbstractFileByPath(normalizePath(p.sourcePath))
@@ -695,29 +791,15 @@ class EpubView extends FileView {
   openSelectionMenu(evt) {
     const sel = this.plugin.readSelection();
     if (!sel.text) return;
-    const preset = {
-      text: sel.text,
-      locator: this.currentLocator(),
-      sourcePath: this.file ? this.file.path : '',
-    };
-    const menu = new Menu();
-    menu.addItem((i) => i.setTitle('摘录到读书笔记').setIcon('quote-glyph').onClick(() => this.plugin.annotate('quote', preset)));
-    menu.addItem((i) => i.setTitle('记录想法到读书笔记').setIcon('pencil').onClick(() => this.plugin.annotate('idea', preset)));
-    menu.addSeparator();
-    menu.addItem((i) => i.setTitle('复制').setIcon('copy').onClick(() => this.copyToClipboard(sel.text)));
-    menu.addItem((i) => i.setTitle('复制为引用').setIcon('quote-glyph').onClick(() => this.copyToClipboard(buildQuote(sel.text, preset.sourcePath, preset.locator))));
-    menu.addItem((i) => i.setTitle('复制原书链接').setIcon('link').onClick(() => this.copyToClipboard(sourceLinkText(preset.sourcePath, preset.locator))));
     evt.preventDefault();
-    menu.showAtMouseEvent(evt);
-  }
-
-  copyToClipboard(text) {
-    if (navigator && navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(
-        () => new Notice('已复制'),
-        () => new Notice('复制失败（剪贴板不可用）')
-      );
-    }
+    // 菜单由插件统一构造，PDF 与 EPUB 完全一致
+    this.plugin
+      .buildAnnotateMenu({
+        text: sel.text,
+        locator: this.currentLocator(),
+        sourcePath: this.file ? this.file.path : '',
+      })
+      .showAtMouseEvent(evt);
   }
 
   /** 把书名与章节下拉填回界面（重建界面后调用） */
@@ -1005,8 +1087,12 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       .addText((t) => t.setValue(s.headingText).onChange(bind('headingText', (v) => v.trim())));
     new Setting(containerEl)
       .setName('自动补来源链接')
-      .setDesc('第一次标注时，在笔记开头补一行「来源：[[原书]]」')
+      .setDesc('第一次标注时补一行「来源：[[原书]]」（插在 frontmatter 之后，不会顶掉 YAML）')
       .addToggle((t) => t.setValue(!!s.sourceLink).onChange(bind('sourceLink')));
+    new Setting(containerEl)
+      .setName('接管 PDF 右键菜单')
+      .setDesc('开启后 PDF 里选中文字右键会出现「摘录 / 想法」；Obsidian 没给 PDF 菜单留钩子，只能接管 —— 关掉即退回原生菜单')
+      .addToggle((t) => t.setValue(!!s.pdfMenu).onChange(bind('pdfMenu')));
 
     containerEl.createEl('h3', { text: 'EPUB 阅读器' });
     new Setting(containerEl)
@@ -1058,6 +1144,9 @@ module.exports.__test = {
   resolveNotePath,
   quoteLines,
   sourceLinkText,
+  frontmatterEnd,
+  pdfPageLink,
+  locationLink,
   buildQuote,
   stamp,
   buildAnnotationBlock,

@@ -67,6 +67,11 @@ ok(!/setInterval|registerInterval/.test(SRC), '整个源码里没有任何定时
 ok(!/registerEvent/.test(SRC), '整个源码里没有事件监听');
 ok(/contextmenu/.test(SRC), 'EPUB 视图注册了右键菜单');
 ok(/new Menu\(\)/.test(SRC), '右键菜单用的是 Obsidian 的 Menu');
+ok(/registerDomEvent\(document, 'contextmenu'/.test(SRC), '接管 PDF 右键（本体没有 pdf-menu 钩子）');
+ok(/\.pdf-container/.test(SRC), '只处理 PDF 容器内的右键');
+ok(/buildAnnotateMenu/.test(SRC), 'PDF 与 EPUB 共用同一个菜单构造器');
+ok(/pdfMenu/.test(SRC), 'PDF 右键接管可关闭');
+ok(/frontmatterEnd\(/.test(SRC), '来源链接会避开 frontmatter');
 ok(/annotate\(kind, preset\)/.test(SRC), 'annotate 支持传入预设选区');
 /* ---------- 0b. 文件视图必须继承 FileView（2026-10-11 真机白屏事故） ---------- */
 ok(/class EpubView extends FileView/.test(SRC), '视图继承 FileView（继承 ItemView 会拿不到 this.file，视图白屏）');
@@ -77,7 +82,7 @@ ok(/Modal, FileView,/.test(SRC), 'FileView 从 obsidian 解构出来');
 ok(/showHint\(/.test(SRC), '没有文件时给提示而不是白屏');
 
 /* ---------- 1. 设置 ---------- */
-eq(Object.keys(T.DEFAULT_SETTINGS).length, 9, '默认设置共 9 项');
+eq(Object.keys(T.DEFAULT_SETTINGS).length, 10, '默认设置共 10 项');
 eq(T.DEFAULT_SETTINGS.noteFolder, '', '默认读书笔记与源文件同目录');
 eq(T.DEFAULT_SETTINGS.insertMode, 'end', '默认写到文末');
 eq(T.DEFAULT_SETTINGS.headingText, '摘录', '默认目标标题为「摘录」');
@@ -119,6 +124,29 @@ eq(T.quoteLines('  缩进行'), '> 缩进行', '行首空白被去掉');
 eq(T.quoteLines('a\r\nb'), '> a\n> b', 'CRLF 归一');
 eq(T.sourceLinkText('书.epub', '第 3 章'), '[[书.epub]] · 第 3 章', '原书链接（带位置）');
 eq(T.sourceLinkText('书.epub', ''), '[[书.epub]]', '原书链接（无位置）');
+
+/* ---------- 4b. 来源链接必须插在 frontmatter 之后（2026-10-11 真机事故） ---------- */
+const fmNote = ['---', 'title: 某书', 'tags:', '  - 读书笔记', '---', '', '正文开始。'].join('\n');
+const withFm = T.ensureSourceLink(fmNote, '《书》.epub', true);
+eq(withFm.added, true, '有 frontmatter 时也会补来源链接');
+eq(withFm.text.split('\n')[0], '---', 'frontmatter 仍在第 1 行');
+eq(withFm.text.indexOf('来源：') > withFm.text.indexOf('tags:'), true, '来源链接在 frontmatter 之后');
+eq(withFm.text.indexOf('正文开始。') > withFm.text.indexOf('来源：'), true, '正文仍在链接之后');
+eq(T.ensureSourceLink(withFm.text, '《书》.epub', true).added, false, '补过之后不重复补');
+eq(T.ensureSourceLink(fmNote, '《书》.epub', false).added, false, '开关关闭时不补');
+eq(T.ensureSourceLink('正文。', '书.epub', true).text.split('\n')[0], '来源：[[书.epub]]', '没有 frontmatter 时仍放开头');
+eq(T.ensureSourceLink('---\ntitle: x\n正文', '书.epub', true).text.split('\n')[0], '来源：[[书.epub]]', 'frontmatter 未闭合时不认（避免误判）');
+eq(T.frontmatterEnd(['---', 'a: 1', '---', 'body']), 3, 'frontmatterEnd 返回结束行之后的下标');
+eq(T.frontmatterEnd(['body']), 0, '没有 frontmatter 返回 0');
+eq(T.frontmatterEnd(['---', 'a: 1']), 0, '未闭合返回 0');
+eq(T.frontmatterEnd([]), 0, '空数组返回 0');
+
+/* ---------- 4c. 位置链接（PDF 用页码） ---------- */
+eq(T.pdfPageLink('书.pdf', 12), '[[书.pdf#page=12]]', 'PDF 页码链接');
+eq(T.pdfPageLink('书.pdf', 0), '[[书.pdf]]', '页码 0 时退回纯链接');
+eq(T.pdfPageLink('书.pdf', null), '[[书.pdf]]', '没有页码时退回纯链接');
+eq(T.locationLink('书.pdf', '第 12 页'), '[[书.pdf#page=12]]', 'PDF 位置链接用页码');
+eq(T.locationLink('书.epub', '第 3 章 · 第一章'), '[[书.epub]] · 第 3 章 · 第一章', 'EPUB 位置链接保留章节');
 eq(
   T.buildQuote('第一行\n第二行', '书.epub', '第 3 章'),
   '> 第一行\n> 第二行\n>\n> — [[书.epub]] · 第 3 章',
