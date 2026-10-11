@@ -640,8 +640,9 @@ class EpubView extends FileView {
     return 'book-open';
   }
 
+  /* 容错：Obsidian 传进来的可能是 "epub" 也可能是 ".epub" */
   canAcceptExtension(extension) {
-    return extension === EPUB_EXT;
+    return String(extension).replace(/^\./, '').toLowerCase() === EPUB_EXT;
   }
 
   async onOpen() {
