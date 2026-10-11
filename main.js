@@ -646,6 +646,14 @@ class EpubView extends FileView {
 
   async onOpen() {
     this.contentEl.addClass('simple-reading');
+    // Obsidian 的 setState（→ onLoadFile）发生在 onOpen 之前，
+    // 所以这里可能已经有书了：那就只重建界面，别再读一遍文件
+    if (this.book && this.file && this.loadedPath === this.file.path) {
+      this.renderShell();
+      this.restoreShell();
+      await this.goto(this.chapter);
+      return;
+    }
     this.renderShell();
     if (this.file) {
       await this.loadBook(this.file);
@@ -653,6 +661,16 @@ class EpubView extends FileView {
       // 不再白屏：说清这个视图是给 .epub 用的
       this.showHint('这个视图是给 .epub 文件用的：在左侧文件浏览器里点开一本 epub。');
     }
+  }
+
+  /** 把书名与章节下拉填回界面（重建界面后调用） */
+  restoreShell() {
+    if (!this.book) return;
+    this.titleEl.setText(this.book.title);
+    this.selectEl.empty();
+    (this.book.labels || []).forEach((c, i) => {
+      this.selectEl.createEl('option', { value: String(i), text: c.label || `第 ${i + 1} 章` });
+    });
   }
 
   /** FileView 生命周期：Obsidian 把文件交给这个视图时走这里 */
@@ -740,11 +758,7 @@ class EpubView extends FileView {
         entries: entries,
         blobUrls: [],
       };
-      this.titleEl.setText(this.book.title);
-      this.selectEl.empty();
-      labels.forEach((c, i) => {
-        this.selectEl.createEl('option', { value: String(i), text: c.label || `第 ${i + 1} 章` });
-      });
+      this.restoreShell();
       const start = this.plugin.positionOf(file.path);
       await this.goto(clampInt(start, 0, Math.max(0, opf.chapters.length - 1), 0));
     } catch (e) {
