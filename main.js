@@ -30,7 +30,7 @@
  * ========================================================================== */
 
 const obsidian = require('obsidian');
-const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, ItemView, normalizePath } = obsidian;
+const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, FileView, normalizePath } = obsidian;
 
 const VIEW_TYPE = 'simple-reading-epub';
 const EPUB_EXT = 'epub';
@@ -617,37 +617,67 @@ class SimpleReadingPlugin extends Plugin {
 
 /* §4 EPUB 阅读器视图 ====================================================== */
 
-class EpubView extends ItemView {
+class EpubView extends FileView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
-    this.book = null; // { title, chapters, layout, buffer, entries, blobUrls }
+    this.book = null; // { title, chapters, labels, buffer, entries, blobUrls }
     this.chapter = 0;
     this.loading = false;
+    this.loadedPath = null;
   }
 
   getViewType() {
     return VIEW_TYPE;
   }
 
+  /* 必须继承 FileView：ItemView 不会带上 this.file，视图会开成空白 */
   getDisplayText() {
-    const f = this.file;
-    return f ? f.basename : 'EPUB 阅读器';
+    return this.file ? this.file.basename : 'EPUB 阅读器';
   }
 
   getIcon() {
     return 'book-open';
   }
 
+  canAcceptExtension(extension) {
+    return extension === EPUB_EXT;
+  }
+
   async onOpen() {
     this.contentEl.addClass('simple-reading');
     this.renderShell();
-    if (this.file instanceof TFile) await this.loadBook(this.file);
+    if (this.file) {
+      await this.loadBook(this.file);
+    } else {
+      // 不再白屏：说清这个视图是给 .epub 用的
+      this.showHint('这个视图是给 .epub 文件用的：在左侧文件浏览器里点开一本 epub。');
+    }
+  }
+
+  /** FileView 生命周期：Obsidian 把文件交给这个视图时走这里 */
+  async onLoadFile(file) {
+    if (this.loadedPath === file.path) return;
+    if (!this.stageEl || !this.selectEl) this.renderShell();
+    await this.loadBook(file);
+  }
+
+  async onUnloadFile() {
+    this.releaseUrls();
+    this.book = null;
+    this.loadedPath = null;
   }
 
   async onClose() {
     this.releaseUrls();
     this.contentEl.empty();
+  }
+
+  /** 没有文件 / 出错时的提示（避免空白面板） */
+  showHint(text) {
+    if (!this.stageEl) return;
+    this.stageEl.empty();
+    this.stageEl.createDiv({ cls: 'sr-error', text: text });
   }
 
   releaseUrls() {
@@ -684,7 +714,9 @@ class EpubView extends ItemView {
   /** 读文件 → 解 zip → 解 OPF → 建目录（只有这一步会碰磁盘，且只在打开时） */
   async loadBook(file) {
     if (this.loading) return;
+    if (!this.stageEl || !this.selectEl) this.renderShell();
     this.loading = true;
+    this.loadedPath = file.path;
     try {
       this.stageEl.setText('正在打开…');
       const buffer = await this.app.vault.readBinary(file);
@@ -750,7 +782,7 @@ class EpubView extends ItemView {
     this.prevBtn.disabled = i <= 0;
     this.nextBtn.disabled = i >= total - 1;
     this.stageEl.scrollTop = 0;
-    await this.plugin.rememberPosition(this.file ? this.file.path : '', i);
+    await this.plugin.rememberPosition(this.file ? this.file.path : this.loadedPath || '', i);
     if (this.plugin.settings.rememberPosition) this.renderProgress(i, total);
   }
 

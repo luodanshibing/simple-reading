@@ -22,10 +22,12 @@ class ItemView {
   }
 }
 
+class FileView extends ItemView {}
+
 const originalLoad = Module._load;
 Module._load = function (request, ...rest) {
   if (request === 'obsidian') {
-    return { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, ItemView, normalizePath: (p) => p };
+    return { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, ItemView, FileView, normalizePath: (p) => p };
   }
   return originalLoad.call(this, request, ...rest);
 };
@@ -63,6 +65,13 @@ ok(!/workspace\.on\(|onLayoutReady/.test(onloadBody), 'onload 不监听 workspac
 ok(/registerView/.test(onloadBody) && /registerExtensions/.test(onloadBody), 'onload 只注册 1 个视图 + 扩展名关联');
 ok(!/setInterval|registerInterval/.test(SRC), '整个源码里没有任何定时器');
 ok(!/registerEvent/.test(SRC), '整个源码里没有事件监听');
+/* ---------- 0b. 文件视图必须继承 FileView（2026-10-11 真机白屏事故） ---------- */
+ok(/class EpubView extends FileView/.test(SRC), '视图继承 FileView（继承 ItemView 会拿不到 this.file，视图白屏）');
+ok(!/class EpubView extends ItemView/.test(SRC), '不再继承 ItemView');
+ok(/async onLoadFile\(file\)/.test(SRC), '实现了 onLoadFile 生命周期');
+ok(/async onUnloadFile\(/.test(SRC), '实现了 onUnloadFile 生命周期');
+ok(/Modal, FileView,/.test(SRC), 'FileView 从 obsidian 解构出来');
+ok(/showHint\(/.test(SRC), '没有文件时给提示而不是白屏');
 
 /* ---------- 1. 设置 ---------- */
 eq(Object.keys(T.DEFAULT_SETTINGS).length, 9, '默认设置共 9 项');

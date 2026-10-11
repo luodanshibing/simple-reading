@@ -19,6 +19,7 @@ Module._load = function (request, ...rest) {
       TFile: Empty,
       Modal: Empty,
       ItemView: Empty,
+      FileView: Empty,
       normalizePath: (p) => p,
     };
   }
