@@ -294,6 +294,26 @@ eq(mapped.map((c) => c.label), ['第一章 起', '第二章'], 'nav 对应到 sp
 eq(T.mapNavToChapters(opf.chapters, []).map((c) => c.label), ['', ''], '没有 nav 时标签为空');
 eq(T.mapNavToChapters(opf.chapters, []).map((c) => c.index), [0, 1], '章节序号');
 
+/* NCX：老式 EPUB 目录（真书里非常常见 —— 这次是拿真书才发现的） */
+const ncxXml =
+  '<ncx><navMap>' +
+  '<navPoint id="n1"><navLabel><text>第一章</text></navLabel><content src="text/ch1.xhtml"/>' +
+  '<navPoint id="n1-1"><navLabel><text>第一节</text></navLabel><content src="text/ch1.xhtml#s1"/></navPoint>' +
+  '</navPoint>' +
+  '<navPoint id="n2"><navLabel><text>第二章</text></navLabel><content src="text/ch2.xhtml"/></navPoint>' +
+  '</navMap></ncx>';
+const ncx = T.parseNcxToc(ncxXml, 'OEBPS/toc.ncx');
+eq(ncx.map((n) => n.label), ['第一章', '第一节', '第二章'], 'NCX 标签（嵌套被拍平）');
+eq(ncx[0].path, 'OEBPS/text/ch1.xhtml', 'NCX 路径解析');
+eq(ncx[1].path, 'OEBPS/text/ch1.xhtml', 'NCX 里的锚点被去掉');
+eq(T.mapNavToChapters(opf.chapters, ncx).map((c) => c.label), ['第一章', '第二章'], 'NCX 对应到 spine（同路径取第一条）');
+eq(T.parseNcxToc('<ncx></ncx>', 'toc.ncx'), [], '空 NCX 不炸');
+const opfWithNcx = opfXml.replace('<item id="css"', '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="css"');
+eq(T.parseOpf(opfWithNcx, 'OEBPS/content.opf').ncxPath, 'OEBPS/toc.ncx', 'OPF 里找到 NCX（按 media-type）');
+eq(T.parseOpf(opfXml, 'OEBPS/content.opf').ncxPath, null, '没有 NCX 时为 null');
+const opfSpineToc = '<package><manifest><item id="t" href="toc.ncx"/><item id="c1" href="a.xhtml"/></manifest><spine toc="t"><itemref idref="c1"/></spine></package>';
+eq(T.parseOpf(opfSpineToc, 'x.opf').ncxPath, 'toc.ncx', '按 spine 的 toc 属性找到 NCX');
+
 /* ---------- 10. XHTML 处理 ---------- */
 const xhtml = '<html><head><style>p{color:red}</style><link rel="stylesheet" href="a.css"/></head><body><h1>标题</h1><p onclick="bad()">正文</p><script>alert(1)</script><img src="images/a.png"/></body></html>';
 eq(T.extractBody(xhtml).indexOf('<h1>标题</h1>'), 0, '取 body 内容');

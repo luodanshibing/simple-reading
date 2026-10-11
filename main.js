@@ -324,12 +324,26 @@ function parseOpf(xmlText, opfPath) {
     const hrefM = /\bhref="([^"]*)"/i.exec(navM[0]);
     if (hrefM) navPath = resolveHref(dir, hrefM[1]);
   }
+  /* 老式 EPUB 用 NCX 做目录（真书里非常常见）：先按 media-type 找，再按 spine 的 toc 属性找 */
+  let ncxPath = null;
+  const ncxItem =
+    /<item\b[^>]*media-type="application\/x-dtbncx\+xml"[^>]*>/i.exec(xml) || /<item\b[^>]*href="[^"]*\.ncx"[^>]*>/i.exec(xml);
+  if (ncxItem) {
+    const hrefM = /\bhref="([^"]*)"/i.exec(ncxItem[0]);
+    if (hrefM) ncxPath = resolveHref(dir, hrefM[1]);
+  }
+  if (!ncxPath) {
+    const spineM = /<spine\b[^>]*>/i.exec(xml);
+    const tocId = spineM ? /\btoc="([^"]*)"/i.exec(spineM[0]) : null;
+    if (tocId && manifest[tocId[1]]) ncxPath = resolveHref(dir, manifest[tocId[1]].href);
+  }
   return {
     title: titleM ? titleM[1].replace(/<[^>]*>/g, '').trim() : '',
     dir: dir,
     manifest: manifest,
     chapters: chapters,
     navPath: navPath,
+    ncxPath: ncxPath,
   };
 }
 
@@ -344,6 +358,25 @@ function parseNavToc(xmlText, navPath) {
     const label = m[2].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
     if (!label) continue;
     out.push({ path: resolveHref(dir, m[1]), label: label });
+  }
+  return out;
+}
+
+/**
+ * NCX（老式 EPUB 目录）→ [{path, label}]
+ * 按文档顺序把每个 <navLabel><text>标签</text></navLabel> 与紧随其后的 <content src="...">
+ * 配对 —— 这样嵌套的 navPoint 也能拍平成一串，正是章节下拉需要的形态。
+ */
+function parseNcxToc(xmlText, ncxPath) {
+  const xml = String(xmlText == null ? '' : xmlText);
+  const dir = dirOf(ncxPath);
+  const out = [];
+  const re = /<navLabel\b[\s\S]*?<text\b[^>]*>([\s\S]*?)<\/text>[\s\S]*?<\/navLabel>[\s\S]*?<content\b[^>]*\bsrc="([^"]+)"/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const label = m[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (!label) continue;
+    out.push({ path: resolveHref(dir, m[2]), label: label });
   }
   return out;
 }
@@ -660,11 +693,11 @@ class EpubView extends ItemView {
       const opfPath = parseContainerXml(decodeUtf8(containerRaw));
       if (!opfPath) throw new Error('epub 里找不到 OPF');
       const opf = parseOpf(decodeUtf8(await readZipEntry(buffer, entries[opfPath])), opfPath);
-      let labels = [];
+      let labels = mapNavToChapters(opf.chapters, []);
       if (opf.navPath && entries[opf.navPath]) {
         labels = mapNavToChapters(opf.chapters, parseNavToc(decodeUtf8(await readZipEntry(buffer, entries[opf.navPath])), opf.navPath));
-      } else {
-        labels = mapNavToChapters(opf.chapters, []);
+      } else if (opf.ncxPath && entries[opf.ncxPath]) {
+        labels = mapNavToChapters(opf.chapters, parseNcxToc(decodeUtf8(await readZipEntry(buffer, entries[opf.ncxPath])), opf.ncxPath));
       }
       this.book = {
         title: opf.title || file.basename,
@@ -927,6 +960,7 @@ module.exports.__test = {
   parseContainerXml,
   parseOpf,
   parseNavToc,
+  parseNcxToc,
   mapNavToChapters,
   extractBody,
   stripUnsafe,
