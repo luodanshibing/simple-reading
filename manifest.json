@@ -1,0 +1,10 @@
+{
+  "id": "simple-reading",
+  "name": "Simple Reading",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "读 PDF / EPUB，划线摘录写进同名读书笔记。",
+  "author": "luodanshibing",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

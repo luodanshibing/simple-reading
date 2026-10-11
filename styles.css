@@ -1,0 +1,170 @@
+/* Simple Reading — EPUB 阅读器与弹窗样式
+   全部使用 Obsidian 主题变量：背景、文字、边框都跟随主题
+   按钮沿用上次的教训：底色/阴影加 !important，否则被主题的 button 规则盖掉 */
+
+.simple-reading {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+/* ---------- 顶栏 ---------- */
+.sr-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sr-title {
+  max-width: 42%;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sr-select {
+  flex: 1 1 160px;
+  min-width: 120px;
+  font-size: 12px;
+}
+
+.sr-nav {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sr-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text-normal);
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sr-btn:hover:not(:disabled) {
+  background: transparent !important;
+  border-color: var(--text-muted);
+}
+
+.sr-btn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* ---------- 正文 ---------- */
+.sr-stage {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px 12px 40px;
+}
+
+.sr-chapter {
+  max-width: var(--sr-max-width, 720px);
+  margin: 0 auto;
+  font-size: var(--sr-font-size, 17px);
+  line-height: var(--sr-line-height, 1.8);
+  word-wrap: break-word;
+}
+
+.sr-chapter img,
+.sr-chapter svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.sr-chapter h1,
+.sr-chapter h2,
+.sr-chapter h3 {
+  line-height: 1.35;
+}
+
+.sr-chapter p {
+  margin: 0.7em 0;
+}
+
+.sr-chapter blockquote {
+  margin: 0.8em 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--interactive-accent);
+  color: var(--text-muted);
+}
+
+.sr-chapter pre,
+.sr-chapter code {
+  background: var(--background-secondary);
+  border-radius: 4px;
+}
+
+.sr-chapter pre {
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+
+.sr-chapter code {
+  padding: 1px 4px;
+  font-size: 0.92em;
+}
+
+.sr-chapter table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+
+.sr-chapter td,
+.sr-chapter th {
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.sr-chapter a {
+  color: var(--link-color, var(--interactive-accent));
+}
+
+.sr-progress {
+  padding: 4px 10px;
+  font-size: 11px;
+  text-align: right;
+  color: var(--text-faint);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.sr-error {
+  padding: 12px;
+  color: var(--text-error, #e5534b);
+}
+
+/* ---------- 想法输入框 ---------- */
+.sr-modal-quote {
+  max-height: 120px;
+  overflow: auto;
+  margin: 6px 0 10px;
+  padding-left: 8px;
+  border-left: 3px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sr-modal-input {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.sr-modal-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

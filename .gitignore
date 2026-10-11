@@ -1,0 +1,11 @@
+# 插件运行时设置（阅读位置等，只该存在于 vault 里，不跟仓库走）
+data.json
+
+# 依赖目录（本项目零依赖）
+node_modules/
+
+# 系统 / 编辑器杂物
+Thumbs.db
+desktop.ini
+.DS_Store
+*.tmp
