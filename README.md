@@ -6,7 +6,7 @@
 
 ## English
 
-Read PDF and EPUB inside Obsidian, and keep your highlights, underlines and thoughts in a **same-named reading note**.
+Read PDF and EPUB inside Obsidian, and keep your highlights, underlines and thoughts in a **same-named reading note**. WeRead highlights sync via the official API, and one-command book notes from a name search, are built in too.
 
 **The PDF and the EPUB are never modified — not one byte.** Everything you annotate is written as plain Markdown into a note, so the plugin can be removed at any time and your library stays exactly as it was.
 
@@ -20,6 +20,8 @@ Read PDF and EPUB inside Obsidian, and keep your highlights, underlines and thou
 | **Reading note** | `books/我的书.pdf` → `books/我的书.md` (or a fixed folder you configure). **If it does not exist you get a prompt — the plugin never creates it.** |
 | **Where it lands** | End of the note, or at the end of the section under a heading you name. If that heading is missing it falls back to the end and tells you. |
 | **First annotation** | Adds `来源：[[我的书.pdf]]` at the top of the note so the note is linked to the book. |
+| **WeRead sync** | One command pulls every highlight/thought from your WeRead account (official Agent API) into one Markdown file per book, in a dedicated folder. |
+| **Book notes** | Type a book name → pick a result → metadata fills your note template and 《书名》.md is created. |
 
 ### What gets written
 
@@ -64,6 +66,8 @@ Settings: API key, output folder, skill_version (the API evolves), template path
 | 记录想法到读书笔记 | Typed thought (plus the selection) → a note block |
 | 打开同名读书笔记 | Opens `书.md` next to the book |
 | 复制同名读书笔记路径 | For when the note does not exist yet |
+| 同步微信读书划线与想法 | Pull all WeRead highlights/thoughts → one md per book in a dedicated folder |
+| 新建读书笔记（搜索微信读书） | Search by name → create 《书名》.md from your note template |
 | 打开当前笔记对应的原书（PDF / EPUB） | From a note back to the book |
 
 In the built-in EPUB reader, **select text and right-click** — the menu offers 摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接, the same set of actions you get from Obsidian's own PDF viewer (those PDF menu items are core Obsidian, not added by this plugin).
@@ -84,12 +88,12 @@ In the built-in EPUB reader, **select text and right-click** — the menu offers
 ### What this deliberately does not do
 
 - **No writing into the PDF / EPUB.** That is why persistent highlights *inside* the book are not drawn: storing them inside the file would break the file, and storing them outside it means they would live in this plugin's private data — which is exactly the kind of software-bound data to avoid. The highlight lives in your note, with a link back to the page.
-- No PDF re-implementation, no annotation database, no bookshelf, no sync, no AI, no OCR.
+- No PDF re-implementation, no annotation database, no bookshelf, no AI, no OCR. (WeRead *highlights sync* exists — via the official Agent API — but no third-party sync service is involved.)
 - No PDF viewer replacement at all: the built-in one already does the reading job.
 
 ### Startup cost
 
-`onload` does three things: read the settings once, register one view (`+ .epub` extension), and register five commands plus the settings tab. It does not walk the vault, read a file, or register an event listener, a timer or a polling loop. The test suite asserts this by reading `main.js` as text.
+`onload` does three things: read the settings once, register one view (`+ .epub` extension), and register seven commands plus the settings tab. It does not walk the vault, read a file, or register an event listener, a timer or a polling loop. The test suite asserts this by reading `main.js` as text.
 
 ### Install (manual)
 
@@ -122,7 +126,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## 简体中文
 
-在 Obsidian 里读 **PDF / EPUB**，划线、高亮、想法全部写进**同名读书笔记**。
+在 Obsidian 里读 **PDF / EPUB**，划线、高亮、想法全部写进**同名读书笔记**。微信读书划线一键同步；书名一搜即建读书笔记。
 
 **原 PDF / EPUB 一个字节都不改** —— 标注全部以 Markdown 文本写进笔记，所以插件随时可卸载，书库保持原样。
 
@@ -136,6 +140,8 @@ MIT — see [LICENSE](LICENSE).
 | **读书笔记** | `books/我的书.pdf` → `books/我的书.md`（也可指定固定目录）。**不存在时只提示，绝不代建** |
 | **写到哪里** | 笔记文末，或你指定标题所在小节的末尾。标题找不到就退回文末并提示 |
 | **第一条标注** | 自动在笔记开头补一行 `来源：[[我的书.pdf]]`，把笔记和书关联起来 |
+| **微信读书同步** | 一条命令拉取账号里全部划线与想法（官方 Agent API），每本一个 md 落进独立子文件夹 |
+| **新建读书笔记** | 输入书名 → 选结果 → 元数据填进模板，生成《书名》.md |
 
 ### 写进去长什么样
 
@@ -180,6 +186,8 @@ EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用
 | 记录想法到读书笔记 | 写想法（可带原文）→ 笔记里生成想法块 |
 | 打开同名读书笔记 | 打开书旁边的 `书.md` |
 | 复制同名读书笔记路径 | 笔记还不存在时用 |
+| 同步微信读书划线与想法 | 拉取全部划线/想法 → 每本一个 md（独立子文件夹） |
+| 新建读书笔记（搜索微信读书） | 书名搜索 → 按模板生成《书名》.md |
 | 打开当前笔记对应的原书（PDF / EPUB） | 从笔记反查书 |
 
 在内置 EPUB 阅读器里**选中文字后右键**，菜单里有：摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接 —— 与 PDF 那边的右键动作对齐（注：PDF 那三条菜单是 **Obsidian 自带**的，不是本插件加的）。
@@ -196,16 +204,21 @@ EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用
 | 自动补来源链接 | 开 | 每篇笔记只补一次 |
 | EPUB 字号 / 最大宽度 / 行高 | 17 px / 720 px / 1.8 | |
 | 记住阅读位置 | 开 | 按书记住读到第几章（存在插件设置里，最多 80 本） |
+| 微信读书 API Key | 空 | `wrk-` 开头；只存在本插件设置里 |
+| 划线保存文件夹 | `D1 书籍馆藏\Weread` | 每本书一个 md，同步为覆盖式更新 |
+| skill_version | `1.0.3` | 官方接口版本号，报错时可升级 |
+| 笔记模板路径 | `1 Obsidian\模板\读书笔记-Douban.md` | `{{变量}}` 被微信读书数据替换 |
+| 笔记输出目录 | `D1 书籍馆藏` | 生成的《书名》.md 落位 |
 
 ### 故意不做的事
 
 - **不往 PDF / EPUB 里写任何东西**。这也是为什么不在书里画常驻高亮：写进文件就破坏了文件；不写进文件就只能存在插件的私有数据里 —— 那正是"数据被软件绑定"。所以高亮存在**你的笔记里**，并带一条指回原书页码的链接。
-- 不重造 PDF 阅读器、不做标注数据库、不做书架、不做同步、不做 AI、不做 OCR。
+- 不重造 PDF 阅读器、不做标注数据库、不做书架、不做 AI、不做 OCR。（微信读书划线同步有 —— 走官方 Agent API，不涉及第三方同步服务。）
 - 完全不动自带 PDF 阅读器 —— 它本来就够用。
 
 ### 启动开销
 
-`onload` 只做三件事：读一次设置、注册 1 个视图（外加 `.epub` 扩展名关联）、注册 5 个命令与设置页。不遍历库、不读文件、不注册事件监听、不起定时器或轮询。测试里有一条**把 `main.js` 当文本读**的断言在守这些结论。
+`onload` 只做三件事：读一次设置、注册 1 个视图（外加 `.epub` 扩展名关联）、注册 7 个命令与设置页。不遍历库、不读文件、不注册事件监听、不起定时器或轮询。测试里有一条**把 `main.js` 当文本读**的断言在守这些结论。
 
 ### 安装（手动）
 
