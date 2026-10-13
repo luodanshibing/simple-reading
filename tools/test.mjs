@@ -82,7 +82,7 @@ ok(/Modal, FileView,/.test(SRC), 'FileView 从 obsidian 解构出来');
 ok(/showHint\(/.test(SRC), '没有文件时给提示而不是白屏');
 
 /* ---------- 1. 设置 ---------- */
-eq(Object.keys(T.DEFAULT_SETTINGS).length, 10, '默认设置共 10 项');
+eq(Object.keys(T.DEFAULT_SETTINGS).length, 15, '默认设置共 15 项');
 eq(T.DEFAULT_SETTINGS.noteFolder, '', '默认读书笔记与源文件同目录');
 eq(T.DEFAULT_SETTINGS.insertMode, 'end', '默认写到文末');
 eq(T.DEFAULT_SETTINGS.headingText, '摘录', '默认目标标题为「摘录」');
@@ -379,6 +379,98 @@ ok(typeof SimpleReadingPlugin === 'function', '默认导出是插件类');
 eq(SimpleReadingPlugin.VIEW_TYPE, 'simple-reading-epub', '视图类型');
 ok(Object.keys(SimpleReadingPlugin.__test).length > 20, '导出的纯函数足够多');
 
+/* ---------- 12. 微信读书（Agent API 数据处理，样本来自 2026-10-13 真机 spike） ---------- */
+const nbJson = {
+  books: [
+    {
+      bookId: '3300170628',
+      book: { bookId: '3300170628', title: '天涯神贴智慧大全', author: '玄谷', cover: 'https://c/x.jpg' },
+      reviewCount: 4,
+      noteCount: 7,
+      bookmarkCount: 0,
+      sort: 1791780045,
+    },
+  ],
+};
+eq(T.parseNotebooks(nbJson).length, 1, 'parseNotebooks 取到书');
+eq(T.parseNotebooks(nbJson)[0].title, '天涯神贴智慧大全', 'parseNotebooks 取到书名');
+eq(T.parseNotebooks({ books: 'bad' }).length, 0, 'parseNotebooks 对坏输入安全');
+
+const blJson = {
+  updated: [
+    { bookmarkId: '3300170628_135_589-611', chapterUid: 135, markText: '甲', range: '589-611', createTime: 1791780045 },
+    { bookmarkId: 'b2', chapterUid: 135, markText: '乙', range: '100-200', createTime: 1791780046 },
+  ],
+  chapters: [{ chapterUid: 135, chapterIdx: 15, title: '第一章' }],
+};
+const bl = T.parseBookmarkList(blJson);
+eq(bl.highlights.length, 2, 'parseBookmarkList 取到划线');
+eq(bl.chapterTitles[0].title, '第一章', 'parseBookmarkList 取到章节名');
+
+const rvJson = {
+  reviews: [
+    { reviewId: 'r1', review: { reviewId: 'r1', type: 1, content: '想法一', abstract: '甲', chapterUid: 135, createTime: 100 } },
+    { reviewId: 'r2', review: { reviewId: 'r2', type: 6, content: '整本书的评价', chapterUid: 0, createTime: 101 } },
+  ],
+};
+const rv = T.parseReviews(rvJson);
+eq(rv.length, 2, 'parseReviews 取到想法与书评');
+eq(rv[0].type, 1, 'parseReviews 保留类型');
+
+const sections = T.groupByChapter(bl.highlights, rv, bl.chapterTitles);
+eq(sections.length, 1, 'groupByChapter 只有一个章节');
+eq(sections[0].title, '第一章', 'groupByChapter 用章节名');
+eq(sections[0].highlights[0].text, '乙', '章内划线按 range 起点排序（乙 100 < 甲 589）');
+eq(sections[0].ideas.length, 1, '该章想法归位');
+eq(sections[0].ideas[0].content, '想法一', '想法内容正确');
+
+eq(T.starsFromRating(930), '⭐⭐⭐⭐⭐', '评分 9.3 → 5 星');
+eq(T.starsFromRating(654), '⭐⭐⭐', '评分 6.5 → 3 星');
+eq(T.starsFromRating(0), '', '无评分为空');
+
+const searchJson = {
+  results: [
+    { title: '电子书', books: [{ searchIdx: 0, bookInfo: { bookId: '695233', title: '三体', author: '刘慈欣', newRating: 930 } }, '垃圾项'] },
+    { title: '无关组', books: [] },
+  ],
+};
+const sr = T.parseSearchResults(searchJson);
+eq(sr.length, 1, 'parseSearchResults 只收有效 bookInfo');
+eq(sr[0].bookId, '695233', 'parseSearchResults 取到 bookId');
+
+eq(T.sanitizeFileName('三体:全集/第一部'), '三体＿全集＿第一部', '文件名消毒（ASCII 非法字符）');
+eq(T.yearOf('2018-06-01 00:00:00'), '2018', '出版年提取');
+
+const wmd = T.buildWereadNoteMd({
+  book: { bookId: 'b1', title: '测试书', author: '作者', cover: 'https://c/x.jpg', readerLink: 'https://weread.qq.com/x' },
+  sections: sections,
+  bookReviews: [{ content: '整本书的评价' }],
+  syncTime: '2026-10-13 19:00',
+});
+ok(wmd.indexOf('---') === 0, '划线 md 的 frontmatter 从第 1 行开始');
+ok(wmd.indexOf('## 第一章') > 0, '章节标题在');
+ok(wmd.indexOf('> 📌 乙') > wmd.indexOf('## 第一章'), '划线在章节之下');
+ok(wmd.indexOf('^b2') > 0, '划线带块引用 id');
+ok(wmd.indexOf('> [!note] 想法') > 0, '想法在');
+ok(wmd.indexOf('整本书的评价') > wmd.indexOf('# 书评'), '书评单独成节');
+ok(wmd.indexOf('文件类别/划线摘录') > 0, '带划线摘录标签');
+
+const tpl = '---\ntitle: 《{{title}}》\npublisher: "{{publisher}}"\nscore: "{{score}}"\n---\n{{desc}}';
+const info = { title: '三体', publisher: '重庆出版社', newRating: 930, intro: '文化大革命\n天体物理', publishTime: '2008-01-01' };
+const vars = T.bookNoteVars(info, { currentDate: '2026-10-13', currentTime: '19:00:00' });
+const rendered = T.renderTemplate(tpl, vars);
+ok(rendered.indexOf('《三体》') > 0, '模板替换书名');
+ok(rendered.indexOf('9.3') > 0, '评分换算（930 → 9.3）');
+eq(vars.scoreStar, '⭐⭐⭐⭐⭐', '评分星（变量表）');
+ok(rendered.indexOf('\n天体物理') === -1, '简介内的换行被安全化');
+ok(rendered.indexOf('文化大革命') > 0, '简介内容保留');
+eq(vars.yearPublished, '2008', '出版年提取进变量表');
+ok(T.renderTemplate('{{nope}}', vars) === '', '未知 ASCII 变量替换为空');
+
+/* 源码断言：weread 是纯命令触发，启动与常驻零开销 */
+ok(SRC.indexOf('setInterval(') === -1, '没有 setInterval（同步是手动命令）');
+ok(SRC.indexOf('registerInterval(') === -1, '没有 registerInterval');
+ok(SRC.indexOf('wereadSyncAll()') >= 0, '同步走命令回调');
 /* ---------- 汇总 ---------- */
 if (fails.length === 0) {
   console.log(`\n通过 ${pass} 项，失败 0 项\n全部通过 ✓\n`);

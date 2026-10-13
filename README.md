@@ -45,6 +45,17 @@ Both are standard callouts, so they render as quote blocks in reading view and s
 
 An EPUB is a ZIP of XHTML. Instead of bundling a ZIP library, this plugin uses **`DecompressionStream('deflate-raw')`**, which Chromium already ships — so the unzip is a few dozen lines and nothing is added to the bundle. Chapters are read from the OPF spine, images are turned into blob URLs on demand and released when the view closes, and the EPUB's own stylesheets are deliberately ignored so the text follows your theme.
 
+### WeRead sync and one-command book notes (v1.3.0)
+
+Two new commands, both talking to the official WeRead Agent API (one Bearer key, no scraping):
+
+| Command | What it does |
+|---|---|
+| 同步微信读书划线与想法 | Pulls every book that has highlights/thoughts from your WeRead account and writes one Markdown file per book into a dedicated folder (overwrite-style, like the old plugin — keep handwritten notes in the reading note). |
+| 新建读书笔记（搜索微信读书） | Type a book name → pick a result → metadata (title/author/cover/publisher/rating/ISBN/intro) fills your reading-note template and 《书名》.md is created. Existing notes are never overwritten. |
+
+Settings: API key, output folder, skill_version (the API evolves), template path, notes folder. Startup cost stays zero: nothing network-related runs until you run a command.
+
 ### Commands
 
 | Command | What it does |
@@ -149,6 +160,17 @@ MIT — see [LICENSE](LICENSE).
 ### 零依赖，EPUB 阅读器也很薄
 
 EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用 Chromium 自带的 **`DecompressionStream('deflate-raw')`** 解压 —— 几十行代码，包体积没变。章节按 OPF 的 spine 顺序读；图片按需转成 blob URL、视图关闭时释放；EPUB 自带的样式**故意忽略**，让正文跟随你的主题。
+
+### 微信读书同步 + 一条命令建读书笔记（v1.3.0）
+
+两条新命令，都走微信读书官方 Agent API（一把 Bearer Key，无爬虫、无反爬对抗）：
+
+| 命令 | 作用 |
+|---|---|
+| 同步微信读书划线与想法 | 拉取账号里所有带划线/想法的书，每本一个 Markdown 文件写入独立子文件夹（整文件覆盖式更新，与旧插件同语义——手写批注请写在读书笔记里） |
+| 新建读书笔记（搜索微信读书） | 输入书名 → 选结果 → 元数据（书名/作者/封面/出版社/评分/ISBN/简介）填进读书笔记模板，生成《书名》.md；已存在同名笔记不覆盖 |
+
+设置项：API Key、划线保存文件夹、skill_version（官方接口演进时升级）、笔记模板路径、笔记输出目录。启动零开销：不在命令触发时，不做任何网络请求。
 
 ### 命令
 

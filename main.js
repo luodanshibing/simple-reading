@@ -30,7 +30,7 @@
  * ========================================================================== */
 
 const obsidian = require('obsidian');
-const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, FileView, Menu, normalizePath } = obsidian;
+const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, FileView, Menu, normalizePath, requestUrl } = obsidian;
 
 const VIEW_TYPE = 'simple-reading-epub';
 const EPUB_EXT = 'epub';
@@ -47,6 +47,13 @@ const DEFAULT_SETTINGS = {
   epubLineHeight: 1.8,
   rememberPosition: true,
   positions: {}, // { "书.epub": 章序号 }
+  // —— 微信读书 ——
+  wereadApiKey: '', // wrk- 开头；浏览器登录微信读书后开 weread.qq.com/api/skills/apikeyGet 复制
+  wereadFolder: 'D Develo/D1 书籍馆藏/Weread', // 划线与想法的落盘目录（每书一个 md，覆盖式更新）
+  wereadSkillVersion: '1.0.3', // 官方 Agent API 的 skill_version（接口演进时可升级）
+  // —— 新建读书笔记（微信读书源）——
+  bookNoteTemplate: '1 Obsidian/模板/读书笔记-Douban.md', // {{变量}} 会被微信读书数据替换
+  bookNotesFolder: 'D Develo/D1 书籍馆藏', // 生成的《书名》.md 放哪
 };
 
 /* §2 纯函数 =============================================================== */
@@ -472,6 +479,244 @@ function rewriteRefs(html, urlFor) {
     .replace(/(<image\b[^>]*\bxlink:href=")([^"]+)(")/gi, (all, pre, href, post) => `${pre}${fn(href)}${post}`);
 }
 
+/* ---------- 微信读书：Agent API 与落盘格式（纯函数） ---------- */
+/* 移植自 zhaohongxuan/obsidian-weread-plugin（MIT）的接口规格，按自研红线重写：
+ *   只保留「拉划线/想法 → 固定格式写 md」这一个能力；Cookie 全家桶、Nunjucks、
+ *   书架 UI、阅读统计全部不移植。字段契约以 2026-10-13 真机 spike 实测为准。 */
+
+const WEREAD_GATEWAY = 'https://i.weread.qq.com/api/agent/gateway';
+const WEREAD_DEFAULT_SKILL_VERSION = '1.0.3';
+
+/** 网关请求体：业务参数与 api_name / skill_version 平铺（官方网关的形态） */
+function gatewayBody(apiName, params, skillVersion) {
+  return JSON.stringify(
+    Object.assign({ api_name: String(apiName || ''), skill_version: String(skillVersion || WEREAD_DEFAULT_SKILL_VERSION) }, params || {})
+  );
+}
+
+function wereadHeaders(apiKey) {
+  return { Authorization: `Bearer ${String(apiKey || '')}`, 'Content-Type': 'application/json' };
+}
+
+/** /user/notebooks → [{bookId, title, author, cover, reviewCount, noteCount, sort}] */
+function parseNotebooks(json) {
+  const books = json && Array.isArray(json.books) ? json.books : [];
+  const out = [];
+  for (const b of books) {
+    if (!b) continue;
+    const info = b.book || {};
+    out.push({
+      bookId: String(b.bookId || info.bookId || ''),
+      title: String(info.title || ''),
+      author: String(info.author || ''),
+      cover: String(info.cover || ''),
+      reviewCount: Number(b.reviewCount || 0),
+      noteCount: Number(b.noteCount || 0),
+      sort: b.sort,
+    });
+  }
+  return out;
+}
+
+/** /book/bookmarklist → { highlights, chapterTitles }（划线按 range 起点排序在分组时做） */
+function parseBookmarkList(json) {
+  const updated = json && Array.isArray(json.updated) ? json.updated : [];
+  const chapters = json && Array.isArray(json.chapters) ? json.chapters : [];
+  return {
+    highlights: updated.map((h) => ({
+      bookmarkId: String((h && h.bookmarkId) || ''),
+      chapterUid: Number((h && h.chapterUid) || 0),
+      text: String((h && h.markText) || ''),
+      rangeStart: Number(String((h && h.range) || '0-0').split('-')[0]) || 0,
+      createTime: Number((h && h.createTime) || 0),
+    })),
+    chapterTitles: chapters.map((c) => ({ chapterUid: Number((c && c.chapterUid) || 0), title: String((c && c.title) || '') })),
+  };
+}
+
+/** /review/list/mine → [{reviewId, type, content, abstract, chapterUid, createTime}]（type 1=划线想法 4=章节点评 6=书评） */
+function parseReviews(json) {
+  const reviews = json && Array.isArray(json.reviews) ? json.reviews : [];
+  return reviews.map((r) => {
+    const v = r && r.review ? r.review : {};
+    return {
+      reviewId: String((v && v.reviewId) || (r && r.reviewId) || ''),
+      type: Number((v && v.type) || 0),
+      content: String((v && v.content) || ''),
+      abstract: String((v && v.abstract) || ''),
+      chapterUid: Number((v && v.chapterUid) || 0),
+      createTime: Number((v && v.createTime) || 0),
+    };
+  });
+}
+
+/**
+ * 划线与想法按章节分组：章节顺序跟书结构走（chapterTitles 的顺序），
+ * 书结构里没有的 chapterUid 追加在后；章内划线按 range 起点排序。
+ */
+function groupByChapter(highlights, reviews, chapterTitles) {
+  const titles = {};
+  const order = [];
+  for (const c of Array.isArray(chapterTitles) ? chapterTitles : []) {
+    if (titles[c.chapterUid] === undefined) order.push(c.chapterUid);
+    titles[c.chapterUid] = c.title || `第 ${c.chapterUid} 章`;
+  }
+  const buckets = {};
+  const ensure = (uid) => {
+    if (!buckets[uid]) {
+      buckets[uid] = { highlights: [], ideas: [] };
+      if (titles[uid] === undefined) {
+        titles[uid] = `第 ${uid} 章`;
+        order.push(uid);
+      }
+    }
+    return buckets[uid];
+  };
+  for (const h of Array.isArray(highlights) ? highlights : []) ensure(h.chapterUid).highlights.push(h);
+  for (const r of Array.isArray(reviews) ? reviews : []) {
+    if (r.type === 6) continue; // 书评单独成节
+    ensure(r.chapterUid).ideas.push(r);
+  }
+  for (const uid of Object.keys(buckets)) {
+    buckets[uid].highlights.sort((a, b) => a.rangeStart - b.rangeStart);
+  }
+  return order.map((uid) => ({ uid: uid, title: titles[uid], highlights: buckets[uid].highlights, ideas: buckets[uid].ideas }));
+}
+
+/** 秒级时间戳 → 'YYYY-MM-DD HH:mm' */
+function wereadTimeString(sec) {
+  const n = Number(sec);
+  if (!n) return '';
+  const d = new Date(n * 1000);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** 微信读书评分（0–1000 的百分整数）→ ⭐（满 5） */
+function starsFromRating(newRating) {
+  const n = Number(newRating);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return '⭐'.repeat(Math.max(1, Math.min(5, Math.round(n / 200))));
+}
+
+/** /store/search → [{bookId, title, author, translator, cover, rating}]（摊平分组） */
+function parseSearchResults(json) {
+  const groups = json && Array.isArray(json.results) ? json.results : [];
+  const out = [];
+  for (const g of groups) {
+    const books = Array.isArray(g && g.books) ? g.books : [];
+    for (const b of books) {
+      const info = b && b.bookInfo ? b.bookInfo : b;
+      if (!info || !info.bookId) continue;
+      out.push({
+        bookId: String(info.bookId),
+        title: String(info.title || ''),
+        author: String(info.author || ''),
+        translator: String(info.translator || ''),
+        cover: String(info.cover || ''),
+        rating: Number(info.newRating || 0),
+      });
+    }
+  }
+  return out;
+}
+
+/** 文件名消毒（书名可能带 \/:*?"<>| 或首尾空白） */
+function sanitizeFileName(name) {
+  return String(name == null ? '' : name)
+    .replace(/[\\/:*?"<>|]/g, '＿')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 出版年：'2018-06-01 …' / '2018' → '2018' */
+function yearOf(value) {
+  const m = /(\d{4})/.exec(String(value == null ? '' : value));
+  return m ? m[1] : '';
+}
+
+/**
+ * 微信读书同步的划线 md（整文件、覆盖式重写——与旧插件同一语义：
+ * 这是插件管理的「原料文件」，手写批注请写在读书笔记里，别写在这里）。
+ */
+function buildWereadNoteMd(input) {
+  const it = input || {};
+  const book = it.book || {};
+  const when = it.syncTime || stamp(new Date());
+  const fmValue = (v) => String(v == null ? '' : v).replace(/"/g, '”');
+  const lines = [
+    '---',
+    'doc_type: weread-sync',
+    `bookId: "${fmValue(book.bookId)}"`,
+    `title: "${fmValue(book.title)}"`,
+    `author: "${fmValue(book.author)}"`,
+    `cover: ${fmValue(book.cover) || '""'}`,
+    `lastSync: ${when}`,
+    'tags:',
+    '  - 文件类别/划线摘录',
+    '---',
+    '',
+    `# ${book.title || '未命名'}`,
+    '',
+    '> [!abstract] 元数据',
+    `> - 作者：${book.author || '......'}`,
+    `> - 微信读书：${book.readerLink || '......'}`,
+    '',
+  ];
+  for (const sec of Array.isArray(it.sections) ? it.sections : []) {
+    lines.push(`## ${sec.title}`, '');
+    for (const h of sec.highlights) {
+      lines.push(`> 📌 ${h.text}`);
+      lines.push(`> ⏱ ${wereadTimeString(h.createTime)} ^${h.bookmarkId}`);
+      lines.push('');
+    }
+    for (const r of sec.ideas) {
+      const ref = r.abstract ? ` · 对「${r.abstract.slice(0, 40)}${r.abstract.length > 40 ? '…' : ''}」` : '';
+      lines.push(`> [!note] 想法${ref}`);
+      lines.push(quoteLines(r.content));
+      lines.push(`> ⏱ ${wereadTimeString(r.createTime)} ^${r.reviewId}`);
+      lines.push('');
+    }
+  }
+  for (const r of Array.isArray(it.bookReviews) ? it.bookReviews : []) {
+    lines.push('## 书评', '', String(r.content || ''), '');
+  }
+  return lines.join('\n');
+}
+
+/** 读书笔记模板的变量表（与 douban 插件的 {{var}} 名字对齐，源换成了微信读书） */
+function bookNoteVars(info, extra) {
+  const i = info || {};
+  const x = extra || {};
+  const rating = Number(i.newRating || 0);
+  return {
+    title: String(i.title || ''),
+    author: String(i.author || ''),
+    translator: String(i.translator || ''),
+    publisher: String(i.publisher || ''),
+    yearPublished: yearOf(i.publishTime),
+    datePublished: String(i.publishTime || ''),
+    image: String(i.cover || ''),
+    url: String(i.readerLink || i.deepLink || ''),
+    desc: String(i.intro || '').replace(/\s+/g, ' ').trim(),
+    isbn: String(i.isbn || ''),
+    totalPage: String(i.totalPage || ''),
+    category: String(i.category || ''),
+    score: rating ? (rating / 100).toFixed(1) : '',
+    scoreStar: starsFromRating(rating),
+    currentDate: String(x.currentDate || ''),
+    currentTime: String(x.currentTime || ''),
+  };
+}
+
+/** 模板渲染：{{key}} → 变量值（没有的键替换为空；值里的引号与换行做安全化） */
+function renderTemplate(templateText, vars) {
+  return String(templateText == null ? '' : templateText).replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (all, key) => {
+    const v = vars ? vars[key] : undefined;
+    if (v === undefined || v === null) return '';
+    return String(v).replace(/"/g, '”').replace(/\r?\n/g, ' ');
+  });
+}
+
 /* §3 插件主体 ============================================================= */
 
 class SimpleReadingPlugin extends Plugin {
@@ -506,6 +751,17 @@ class SimpleReadingPlugin extends Plugin {
       id: 'open-source-book',
       name: '打开当前笔记对应的原书（PDF / EPUB）',
       callback: () => this.openSourceBook(),
+    });
+
+    this.addCommand({
+      id: 'weread-sync',
+      name: '同步微信读书划线与想法',
+      callback: () => this.wereadSyncAll(),
+    });
+    this.addCommand({
+      id: 'create-book-note',
+      name: '新建读书笔记（搜索微信读书）',
+      callback: () => this.createBookNoteFromSearch(),
     });
 
     this.addSettingTab(new SimpleReadingSettingTab(this.app, this));
@@ -709,6 +965,158 @@ class SimpleReadingPlugin extends Plugin {
       }
     }
     new Notice('同目录下没有同名的 PDF / EPUB');
+  }
+
+  /* ---------- 微信读书（命令触发才联网；onload 与这里无关） ---------- */
+
+  /** Agent 网关：单端点 POST，errcode 非 0 视为业务错误抛出 */
+  async wereadGateway(apiName, params) {
+    const res = await requestUrl({
+      url: WEREAD_GATEWAY,
+      method: 'POST',
+      headers: wereadHeaders(this.settings.wereadApiKey),
+      body: gatewayBody(apiName, params, this.settings.wereadSkillVersion),
+    });
+    let j = null;
+    try {
+      j = res.json;
+    } catch (e) {
+      try {
+        j = JSON.parse(res.text);
+      } catch (e2) {
+        j = null;
+      }
+    }
+    if (j && typeof j.errcode === 'number' && j.errcode !== 0) {
+      throw new Error(`微信读书接口错误 ${j.errcode}${j.errmsg ? '：' + j.errmsg : ''}`);
+    }
+    if (!j) throw new Error(`微信读书接口返回无法解析${res.text ? '：' + String(res.text).slice(0, 120) : ''}`);
+    return j;
+  }
+
+  /** 建目录（缺才建）→ 已存在就整文件重写，不存在就创建 */
+  async writeVaultFile(path, content) {
+    const p = normalizePath(path);
+    const dir = dirOf(p);
+    if (dir && !this.app.vault.getAbstractFileByPath(normalizePath(dir))) {
+      try {
+        await this.app.vault.createFolder(normalizePath(dir));
+      } catch (e) {
+        /* 并发或已存在时忽略 */
+      }
+    }
+    const existing = this.app.vault.getAbstractFileByPath(p);
+    if (existing instanceof TFile) await this.app.vault.modify(existing, content);
+    else await this.app.vault.create(p, content);
+  }
+
+  /**
+   * 一键同步微信读书划线与想法：
+   * 书架（分页）→ 每本书拉划线 + 想法 → 固定格式整文件重写到独立子文件夹。
+   * 手写批注永远写在读书笔记里；这个目录里的文件是插件管理的「原料」。
+   */
+  async wereadSyncAll() {
+    const key = String(this.settings.wereadApiKey || '').trim();
+    if (!key) {
+      new Notice('未配置微信读书 API Key（设置 → Simple Reading → 微信读书）', 8000);
+      return;
+    }
+    const folder = String(this.settings.wereadFolder || '').trim();
+    if (!folder) return new Notice('未配置划线保存文件夹（设置 → Simple Reading → 微信读书）');
+
+    new Notice('微信读书同步：正在拉书架…');
+    let notebooks = [];
+    let lastSort = null;
+    for (let page = 0; page < 30; page += 1) {
+      const params = { count: 300 };
+      if (lastSort !== null) params.lastSort = lastSort;
+      const j = await this.wereadGateway('/user/notebooks', params);
+      const batch = parseNotebooks(j);
+      if (!batch.length) break;
+      notebooks = notebooks.concat(batch);
+      if (j && j.hasMore === 1 && batch.length) lastSort = batch[batch.length - 1].sort;
+      else break;
+    }
+    if (!notebooks.length) return new Notice('微信读书书架里没有带笔记的书');
+
+    let done = 0;
+    const errs = [];
+    for (const nb of notebooks) {
+      try {
+        const bl = parseBookmarkList(await this.wereadGateway('/book/bookmarklist', { bookId: nb.bookId }));
+        const rv = parseReviews(await this.wereadGateway('/review/list/mine', { bookid: nb.bookId, synckey: 0 }));
+        const sections = groupByChapter(bl.highlights, rv.filter((r) => r.type !== 6), bl.chapterTitles);
+        const bookReviews = rv.filter((r) => r.type === 6);
+        const info = await this.wereadGateway('/book/info', { bookId: nb.bookId });
+        const book = {
+          bookId: nb.bookId,
+          title: (info && info.title) || nb.title,
+          author: (info && info.author) || nb.author,
+          cover: (info && info.cover) || nb.cover,
+          readerLink: (info && info.readerLink) || '',
+        };
+        const md = buildWereadNoteMd({ book: book, sections: sections, bookReviews: bookReviews, syncTime: stamp(new Date()) });
+        await this.writeVaultFile(`${folder}/${sanitizeFileName(book.title || nb.bookId)}.md`, md);
+        done += 1;
+        new Notice(`微信读书同步 ${done}/${notebooks.length}：${book.title}`);
+      } catch (e) {
+        errs.push(`${nb.title || nb.bookId}：${e && e.message ? e.message : e}`);
+      }
+    }
+    new Notice(
+      `微信读书同步完成 ${done}/${notebooks.length}${errs.length ? `；失败 ${errs.length} 本（详情见控制台）` : ''}`,
+      8000
+    );
+    if (errs.length) console.error('[simple-reading] 微信读书同步失败：\n' + errs.join('\n'));
+  }
+
+  /** 新建读书笔记：书名 → 微信读书搜索 → 选书 → 拉详情 → 按库内模板生成《书名》.md */
+  async createBookNoteFromSearch() {
+    const key = String(this.settings.wereadApiKey || '').trim();
+    if (!key) {
+      new Notice('未配置微信读书 API Key（设置 → Simple Reading → 微信读书）', 8000);
+      return;
+    }
+    const keyword = await new Promise((resolve) => new WereadInputModal(this.app, '输入书名（微信读书搜索）', resolve).open());
+    if (!keyword || !keyword.trim()) return;
+
+    new Notice('微信读书搜索…');
+    const results = parseSearchResults(await this.wereadGateway('/store/search', { keyword: keyword.trim(), count: 10 }));
+    if (!results.length) return new Notice(`没有搜到「${keyword.trim()}」`);
+    const pick = await new Promise((resolve) => new WereadPickModal(this.app, results, resolve).open());
+    if (pick === null || pick === undefined) return;
+    const chosen = results[pick];
+
+    new Notice(`拉取《${chosen.title}》的详情…`);
+    const info = await this.wereadGateway('/book/info', { bookId: chosen.bookId });
+    const book = Object.assign({}, info, {
+      translator: chosen.translator || (info && info.translator) || '',
+      cover: (info && info.cover) || chosen.cover,
+      readerLink: (info && info.readerLink) || '',
+    });
+
+    const templatePath = String(this.settings.bookNoteTemplate || '').trim();
+    const tplFile = templatePath ? this.app.vault.getAbstractFileByPath(normalizePath(templatePath)) : null;
+    if (!(tplFile instanceof TFile)) {
+      return new Notice(`读书笔记模板不存在：${templatePath}\n（设置 → Simple Reading → 新建读书笔记 里可改）`, 8000);
+    }
+    const tplText = await this.app.vault.read(tplFile);
+    const nowD = new Date();
+    const vars = bookNoteVars(book, {
+      currentDate: `${nowD.getFullYear()}-${pad2(nowD.getMonth() + 1)}-${pad2(nowD.getDate())}`,
+      currentTime: `${pad2(nowD.getHours())}:${pad2(nowD.getMinutes())}:${pad2(nowD.getSeconds())}`,
+    });
+    const md = renderTemplate(tplText, vars);
+
+    const outFolder = String(this.settings.bookNotesFolder || '').replace(/^\/+|\/+$/g, '');
+    const path = `${outFolder ? outFolder + '/' : ''}《${sanitizeFileName(book.title || chosen.bookId)}》.md`;
+    if (this.app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFile) {
+      return new Notice(`已存在同名读书笔记，不覆盖：${path}`, 8000);
+    }
+    await this.writeVaultFile(path, md);
+    const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+    new Notice(`已创建：${path}`);
   }
 
   /** EPUB 阅读位置（记在 data.json，最多 POSITION_LIMIT 本） */
@@ -1000,6 +1408,79 @@ function mimeOf(path) {
   return 'application/octet-stream';
 }
 
+/* §4b 微信读书的输入与选书弹窗 ============================================ */
+
+class WereadInputModal extends Modal {
+  constructor(app, title, resolve) {
+    super(app);
+    this.title = title;
+    this.resolve = resolve;
+    this.done = false;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: this.title });
+    const input = contentEl.createEl('input', { type: 'text', cls: 'sr-modal-input' });
+    input.style.width = '100%';
+    input.placeholder = '书名关键词…（Enter 确认）';
+    const bar = contentEl.createDiv({ cls: 'sr-modal-bar' });
+    const ok = bar.createEl('button', { text: '搜索', cls: 'mod-cta' });
+    const cancel = bar.createEl('button', { text: '取消' });
+    const submit = () => {
+      this.done = true;
+      const v = input.value;
+      this.close();
+      this.resolve(v);
+    };
+    ok.addEventListener('click', submit);
+    cancel.addEventListener('click', () => this.close());
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submit();
+      }
+    });
+    setTimeout(() => input.focus(), 0);
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (!this.done) this.resolve('');
+  }
+}
+
+class WereadPickModal extends Modal {
+  constructor(app, items, resolve) {
+    super(app);
+    this.items = items || [];
+    this.resolve = resolve;
+    this.done = false;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: '选一本书' });
+    if (!this.items.length) contentEl.createDiv({ text: '没有可选项' });
+    this.items.forEach((it, i) => {
+      const b = contentEl.createEl('button', {
+        text: `${it.title}${it.author ? ' · ' + it.author : ''}${it.rating ? ` · ${it.rating / 100}` : ''}`,
+      });
+      b.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
+      b.addEventListener('click', () => {
+        this.done = true;
+        this.close();
+        this.resolve(i);
+      });
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    if (!this.done) this.resolve(null);
+  }
+}
+
 /* §5 想法输入框 =========================================================== */
 
 class IdeaModal extends Modal {
@@ -1094,6 +1575,30 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       .setDesc('开启后 PDF 里选中文字右键会出现「摘录 / 想法」；Obsidian 没给 PDF 菜单留钩子，只能接管 —— 关掉即退回原生菜单')
       .addToggle((t) => t.setValue(!!s.pdfMenu).onChange(bind('pdfMenu')));
 
+    containerEl.createEl('h3', { text: '微信读书' });
+    new Setting(containerEl)
+      .setName('API Key')
+      .setDesc('wrk- 开头。浏览器登录微信读书后打开 weread.qq.com/api/skills/apikeyGet 复制；只存在本插件设置里')
+      .addText((t) => t.setValue(s.wereadApiKey).onChange(bind('wereadApiKey', (v) => v.trim())));
+    new Setting(containerEl)
+      .setName('划线保存文件夹')
+      .setDesc('每本书一个 md，同步时整文件重写 —— 这是插件管理的原料文件，手写批注请写在读书笔记里')
+      .addText((t) => t.setValue(s.wereadFolder).onChange(bind('wereadFolder', (v) => v.trim())));
+    new Setting(containerEl)
+      .setName('skill_version')
+      .setDesc('微信读书官方接口版本号；哪天报「接口错误」，去官网看最新版本号填进来')
+      .addText((t) => t.setValue(s.wereadSkillVersion).onChange(bind('wereadSkillVersion', (v) => v.trim())));
+
+    containerEl.createEl('h3', { text: '新建读书笔记（微信读书源）' });
+    new Setting(containerEl)
+      .setName('笔记模板路径')
+      .setDesc('模板里的 {{title}} {{author}} {{publisher}} {{score}} 等变量会被微信读书数据替换')
+      .addText((t) => t.setValue(s.bookNoteTemplate).onChange(bind('bookNoteTemplate', (v) => v.trim())));
+    new Setting(containerEl)
+      .setName('笔记输出目录')
+      .setDesc('生成的《书名》.md 放在这个目录（已存在同名笔记时不覆盖）')
+      .addText((t) => t.setValue(s.bookNotesFolder).onChange(bind('bookNotesFolder', (v) => v.trim())));
+
     containerEl.createEl('h3', { text: 'EPUB 阅读器' });
     new Setting(containerEl)
       .setName('正文字号')
@@ -1162,4 +1667,18 @@ module.exports.__test = {
   extractBody,
   stripUnsafe,
   rewriteRefs,
+  gatewayBody,
+  wereadHeaders,
+  parseNotebooks,
+  parseBookmarkList,
+  parseReviews,
+  groupByChapter,
+  wereadTimeString,
+  starsFromRating,
+  parseSearchResults,
+  sanitizeFileName,
+  yearOf,
+  buildWereadNoteMd,
+  bookNoteVars,
+  renderTemplate,
 };
