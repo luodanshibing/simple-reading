@@ -1018,11 +1018,11 @@ class SimpleReadingPlugin extends Plugin {
   async wereadSyncAll() {
     const key = String(this.settings.wereadApiKey || '').trim();
     if (!key) {
-      new Notice('未配置微信读书 API Key（设置 → Simple Reading）', 8000);
+      new Notice('未配置微信读书 API Key', 8000);
       return;
     }
     const folder = String(this.settings.wereadFolder || '').trim();
-    if (!folder) return new Notice('未配置划线保存文件夹（设置 → Simple Reading）');
+    if (!folder) return new Notice('未配置划线保存文件夹');
 
     new Notice('微信读书同步：正在拉书架…');
     let notebooks = [];
@@ -1074,7 +1074,7 @@ class SimpleReadingPlugin extends Plugin {
   async createBookNoteFromSearch() {
     const key = String(this.settings.wereadApiKey || '').trim();
     if (!key) {
-      new Notice('未配置微信读书 API Key（设置 → Simple Reading）', 8000);
+      new Notice('未配置微信读书 API Key', 8000);
       return;
     }
     const keyword = await new Promise((resolve) => new WereadInputModal(this.app, '输入书名', resolve).open());
@@ -1098,7 +1098,7 @@ class SimpleReadingPlugin extends Plugin {
     const templatePath = String(this.settings.bookNoteTemplate || '').trim();
     const tplFile = templatePath ? this.app.vault.getAbstractFileByPath(normalizePath(templatePath)) : null;
     if (!(tplFile instanceof TFile)) {
-      return new Notice(`读书笔记模板不存在：${templatePath}\n（设置 → Simple Reading → 新建读书笔记 里可改）`, 8000);
+      return new Notice(`读书笔记模板不存在：${templatePath}`, 8000);
     }
     const tplText = await this.app.vault.read(tplFile);
     const nowD = new Date();
