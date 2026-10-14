@@ -53,8 +53,8 @@ Two new commands, both talking to the official WeRead Agent API (one Bearer key,
 
 | Command | What it does |
 |---|---|
-| 同步微信读书划线与想法 | Pulls every book that has highlights/thoughts from your WeRead account and writes one Markdown file per book into a dedicated folder (overwrite-style, like the old plugin — keep handwritten notes in the reading note). |
-| 新建读书笔记（搜索微信读书） | Type a book name → pick a result → metadata (title/author/cover/publisher/rating/ISBN/intro) fills your reading-note template and 《书名》.md is created. Existing notes are never overwritten. |
+| 同步微信读书划线 | Pulls every book that has highlights/thoughts from your WeRead account and writes one Markdown file per book into a dedicated folder (overwrite-style, like the old plugin — keep handwritten notes in the reading note). |
+| 搜索书名新建读书笔记 | Type a book name → pick a result → metadata (title/author/cover/publisher/rating/ISBN/intro) fills your reading-note template and 《书名》.md is created. Existing notes are never overwritten. |
 
 Settings: API key, output folder, skill_version (the API evolves), template path, notes folder. Startup cost stays zero: nothing network-related runs until you run a command.
 
@@ -62,13 +62,13 @@ Settings: API key, output folder, skill_version (the API evolves), template path
 
 | Command | What it does |
 |---|---|
-| 摘录选中内容到读书笔记 | Selected text → a quote block in the reading note |
+| 摘录到读书笔记 | Selected text → a quote block in the reading note |
 | 记录想法到读书笔记 | Typed thought (plus the selection) → a note block |
 | 打开同名读书笔记 | Opens `书.md` next to the book |
-| 复制同名读书笔记路径 | For when the note does not exist yet |
-| 同步微信读书划线与想法 | Pull all WeRead highlights/thoughts → one md per book in a dedicated folder |
-| 新建读书笔记（搜索微信读书） | Search by name → create 《书名》.md from your note template |
-| 打开当前笔记对应的原书（PDF / EPUB） | From a note back to the book |
+| 复制读书笔记路径 | For when the note does not exist yet |
+| 同步微信读书划线 | Pull all WeRead highlights/thoughts → one md per book in a dedicated folder |
+| 搜索书名新建读书笔记 | Search by name → create 《书名》.md from your note template |
+| 打开对应的原书 | From a note back to the book |
 
 In the built-in EPUB reader, **select text and right-click** — the menu offers 摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接, the same set of actions you get from Obsidian's own PDF viewer (those PDF menu items are core Obsidian, not added by this plugin).
 
@@ -173,8 +173,8 @@ EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用
 
 | 命令 | 作用 |
 |---|---|
-| 同步微信读书划线与想法 | 拉取账号里所有带划线/想法的书，每本一个 Markdown 文件写入独立子文件夹（整文件覆盖式更新，与旧插件同语义——手写批注请写在读书笔记里） |
-| 新建读书笔记（搜索微信读书） | 输入书名 → 选结果 → 元数据（书名/作者/封面/出版社/评分/ISBN/简介）填进读书笔记模板，生成《书名》.md；已存在同名笔记不覆盖 |
+| 同步微信读书划线 | 拉取账号里所有带划线/想法的书，每本一个 Markdown 文件写入独立子文件夹（整文件覆盖式更新，与旧插件同语义——手写批注请写在读书笔记里） |
+| 搜索书名新建读书笔记 | 输入书名 → 选结果 → 元数据（书名/作者/封面/出版社/评分/ISBN/简介）填进读书笔记模板，生成《书名》.md；已存在同名笔记不覆盖 |
 
 设置项：API Key、划线保存文件夹、skill_version（官方接口演进时升级）、笔记模板路径、笔记输出目录。启动零开销：不在命令触发时，不做任何网络请求。
 
@@ -182,13 +182,13 @@ EPUB 本质是一个装 XHTML 的 ZIP。本插件**不引压缩库**，而是用
 
 | 命令 | 作用 |
 |---|---|
-| 摘录选中内容到读书笔记 | 选中文字 → 笔记里生成摘录块 |
+| 摘录到读书笔记 | 选中文字 → 笔记里生成摘录块 |
 | 记录想法到读书笔记 | 写想法（可带原文）→ 笔记里生成想法块 |
 | 打开同名读书笔记 | 打开书旁边的 `书.md` |
-| 复制同名读书笔记路径 | 笔记还不存在时用 |
-| 同步微信读书划线与想法 | 拉取全部划线/想法 → 每本一个 md（独立子文件夹） |
-| 新建读书笔记（搜索微信读书） | 书名搜索 → 按模板生成《书名》.md |
-| 打开当前笔记对应的原书（PDF / EPUB） | 从笔记反查书 |
+| 复制读书笔记路径 | 笔记还不存在时用 |
+| 同步微信读书划线 | 拉取全部划线/想法 → 每本一个 md（独立子文件夹） |
+| 搜索书名新建读书笔记 | 书名搜索 → 按模板生成《书名》.md |
+| 打开对应的原书 | 从笔记反查书 |
 
 在内置 EPUB 阅读器里**选中文字后右键**，菜单里有：摘录到读书笔记 / 记录想法到读书笔记 / 复制 / 复制为引用 / 复制原书链接 —— 与 PDF 那边的右键动作对齐（注：PDF 那三条菜单是 **Obsidian 自带**的，不是本插件加的）。
 

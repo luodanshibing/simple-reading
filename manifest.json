@@ -1,9 +1,9 @@
 {
   "id": "simple-reading",
   "name": "Simple Reading",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "minAppVersion": "1.5.0",
-  "description": "读 PDF / EPUB，划线摘录进同名笔记；同步微信读书划线与想法，搜书名建读书笔记。",
+  "description": "读 PDF / EPUB，划线摘录进读书笔记；同步微信读书划线，搜书名建读书笔记。",
   "author": "luodanshibing",
   "authorUrl": "",
   "isDesktopOnly": false
