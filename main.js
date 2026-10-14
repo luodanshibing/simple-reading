@@ -1,11 +1,11 @@
 'use strict';
 
 /* ==========================================================================
- * Simple Reading — 在 Obsidian 里读 PDF / EPUB，划线摘录写进同名读书笔记
+ * Simple Reading — 在 Obsidian 里读 PDF / EPUB，划线摘录写进读书笔记
  * --------------------------------------------------------------------------
  * 1. PDF 直接用 Obsidian 自带阅读器（本插件不重造），只取它的选区。
  * 2. EPUB 自带一个极简阅读器：能打开、能翻页、背景跟随 Obsidian 主题。
- * 3. 摘录 / 想法写进**同名读书笔记**（`书.pdf` → `书.md`）。
+ * 3. 摘录 / 想法写进**读书笔记**（`书.pdf` → `书.md`）。
  * 4. 同名笔记不存在时**只提示、不代建**。
  * 5. 写进笔记的位置可配：文末，或指定标题之下。
  * 6. 原 PDF / EPUB **一个字节都不改**；写的只有 Markdown 文本，随时可删可卸。
@@ -126,7 +126,7 @@ function resolveHref(baseDir, href) {
 }
 
 /**
- * 同名读书笔记路径：默认与源文件同目录，可用 noteFolder 指定固定目录。
+ * 读书笔记路径：默认与源文件同目录，可用 noteFolder 指定固定目录。
  * 例：`books/我的书.pdf` → `books/我的书.md`（或 `<noteFolder>/我的书.md`）。
  */
 function resolveNotePath(sourcePath, settings) {
@@ -308,7 +308,7 @@ function readZipEntries(buffer) {
       break;
     }
   }
-  if (eocd < 0) throw new Error('不是有效的 zip / epub（找不到中央目录结尾）');
+  if (eocd < 0) throw new Error('不是有效的 zip/epub');
   const count = view.getUint16(eocd + 10, true);
   let off = view.getUint32(eocd + 16, true);
   const entries = {};
@@ -729,7 +729,7 @@ class SimpleReadingPlugin extends Plugin {
 
     this.addCommand({
       id: 'excerpt-to-note',
-      name: '摘录选中内容到读书笔记',
+      name: '摘录到读书笔记',
       callback: () => this.annotate('quote'),
     });
     this.addCommand({
@@ -739,28 +739,28 @@ class SimpleReadingPlugin extends Plugin {
     });
     this.addCommand({
       id: 'open-reading-note',
-      name: '打开同名读书笔记',
+      name: '打开读书笔记',
       callback: () => this.openReadingNote(),
     });
     this.addCommand({
       id: 'copy-reading-note-path',
-      name: '复制同名读书笔记路径',
+      name: '复制读书笔记路径',
       callback: () => this.copyReadingNotePath(),
     });
     this.addCommand({
       id: 'open-source-book',
-      name: '打开当前笔记对应的原书（PDF / EPUB）',
+      name: '打开对应的原书',
       callback: () => this.openSourceBook(),
     });
 
     this.addCommand({
       id: 'weread-sync',
-      name: '同步微信读书划线与想法',
+      name: '同步微信读书划线',
       callback: () => this.wereadSyncAll(),
     });
     this.addCommand({
       id: 'create-book-note',
-      name: '新建读书笔记（搜索微信读书）',
+      name: '搜索书名新建读书笔记',
       callback: () => this.createBookNoteFromSearch(),
     });
 
@@ -828,7 +828,7 @@ class SimpleReadingPlugin extends Plugin {
   }
 
   /**
-   * 核心：把摘录 / 想法写进同名读书笔记。
+   * 核心：把摘录 / 想法写进读书笔记。
    * preset 由 EPUB 视图的右键菜单传入（{ text, locator, sourcePath }）——
    * 免得依赖"点菜单那一刻"的全局选区（右键有可能把选区清掉）。
    */
@@ -881,7 +881,7 @@ class SimpleReadingPlugin extends Plugin {
     if (navigator && navigator.clipboard) {
       navigator.clipboard.writeText(String(text == null ? '' : text)).then(
         () => new Notice('已复制'),
-        () => new Notice('复制失败（剪贴板不可用）')
+        () => new Notice('复制失败：剪贴板不可用')
       );
     }
   }  async annotate(kind, preset) {
@@ -890,7 +890,7 @@ class SimpleReadingPlugin extends Plugin {
       ? this.app.vault.getAbstractFileByPath(normalizePath(p.sourcePath))
       : this.currentSourceFile();
     if (!source || !(source instanceof TFile)) {
-      new Notice('请先打开一个 PDF 或 EPUB（本插件按当前文件找同名读书笔记）');
+      new Notice('请先打开一个 PDF 或 EPUB');
       return;
     }
     const sel = p.text || p.locator ? { text: p.text || '', locator: p.locator || '' } : this.readSelection();
@@ -908,7 +908,7 @@ class SimpleReadingPlugin extends Plugin {
 
     const note = await this.readReadingNote(source.path);
     if (!note.file) {
-      new Notice(`没有找到同名读书笔记：${note.path}\n请先自己创建这个 md 文件（插件不代建）`, 8000);
+      new Notice(`没有找到读书笔记：${note.path}\n请先自己创建这个 md 文件（插件不代建）`, 8000);
       return;
     }
 
@@ -1018,11 +1018,11 @@ class SimpleReadingPlugin extends Plugin {
   async wereadSyncAll() {
     const key = String(this.settings.wereadApiKey || '').trim();
     if (!key) {
-      new Notice('未配置微信读书 API Key（设置 → Simple Reading → 微信读书）', 8000);
+      new Notice('未配置微信读书 API Key（设置 → Simple Reading）', 8000);
       return;
     }
     const folder = String(this.settings.wereadFolder || '').trim();
-    if (!folder) return new Notice('未配置划线保存文件夹（设置 → Simple Reading → 微信读书）');
+    if (!folder) return new Notice('未配置划线保存文件夹（设置 → Simple Reading）');
 
     new Notice('微信读书同步：正在拉书架…');
     let notebooks = [];
@@ -1074,10 +1074,10 @@ class SimpleReadingPlugin extends Plugin {
   async createBookNoteFromSearch() {
     const key = String(this.settings.wereadApiKey || '').trim();
     if (!key) {
-      new Notice('未配置微信读书 API Key（设置 → Simple Reading → 微信读书）', 8000);
+      new Notice('未配置微信读书 API Key（设置 → Simple Reading）', 8000);
       return;
     }
-    const keyword = await new Promise((resolve) => new WereadInputModal(this.app, '输入书名（微信读书搜索）', resolve).open());
+    const keyword = await new Promise((resolve) => new WereadInputModal(this.app, '输入书名', resolve).open());
     if (!keyword || !keyword.trim()) return;
 
     new Notice('微信读书搜索…');
@@ -1111,7 +1111,7 @@ class SimpleReadingPlugin extends Plugin {
     const outFolder = String(this.settings.bookNotesFolder || '').replace(/^\/+|\/+$/g, '');
     const path = `${outFolder ? outFolder + '/' : ''}《${sanitizeFileName(book.title || chosen.bookId)}》.md`;
     if (this.app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFile) {
-      return new Notice(`已存在同名读书笔记，不覆盖：${path}`, 8000);
+      return new Notice(`已存在读书笔记，不覆盖：${path}`, 8000);
     }
     await this.writeVaultFile(path, md);
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
@@ -1423,7 +1423,7 @@ class WereadInputModal extends Modal {
     contentEl.createEl('h3', { text: this.title });
     const input = contentEl.createEl('input', { type: 'text', cls: 'sr-modal-input' });
     input.style.width = '100%';
-    input.placeholder = '书名关键词…（Enter 确认）';
+    input.placeholder = '书名关键词…';
     const bar = contentEl.createDiv({ cls: 'sr-modal-bar' });
     const ok = bar.createEl('button', { text: '搜索', cls: 'mod-cta' });
     const cancel = bar.createEl('button', { text: '取消' });
@@ -1500,7 +1500,7 @@ class IdeaModal extends Modal {
     }
     const input = contentEl.createEl('textarea', { cls: 'sr-modal-input' });
     input.rows = 5;
-    input.placeholder = '写点什么…（回车换行，Ctrl/Cmd+Enter 保存）';
+    input.placeholder = '写点什么…';
     const bar = contentEl.createDiv({ cls: 'sr-modal-bar' });
     const ok = bar.createEl('button', { text: '保存', cls: 'mod-cta' });
     const cancel = bar.createEl('button', { text: '取消' });
@@ -1550,11 +1550,11 @@ class SimpleReadingSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: '读书笔记' });
     new Setting(containerEl)
       .setName('读书笔记目录')
-      .setDesc('留空 = 与 PDF / EPUB 同目录；也可以填一个固定目录（如 读书笔记）')
+      .setDesc('留空则与 PDF / EPUB 同目录')
       .addText((t) => t.setValue(s.noteFolder).onChange(bind('noteFolder', (v) => v.trim())));
     new Setting(containerEl)
       .setName('写入位置')
-      .setDesc('文末，或某个指定标题之下（标题不存在时会退回文末并提示）')
+      .setDesc('文末，或某个指定标题之下；标题不存在则退回文末')
       .addDropdown((d) =>
         d
           .addOption('end', '文末')
@@ -1568,7 +1568,7 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       .addText((t) => t.setValue(s.headingText).onChange(bind('headingText', (v) => v.trim())));
     new Setting(containerEl)
       .setName('自动补来源链接')
-      .setDesc('第一次标注时补一行「来源：[[原书]]」（插在 frontmatter 之后，不会顶掉 YAML）')
+      .setDesc('第一次标注时补一行「来源：[[原书]]」')
       .addToggle((t) => t.setValue(!!s.sourceLink).onChange(bind('sourceLink')));
     new Setting(containerEl)
       .setName('接管 PDF 右键菜单')
@@ -1589,14 +1589,14 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       .setDesc('微信读书官方接口版本号；哪天报「接口错误」，去官网看最新版本号填进来')
       .addText((t) => t.setValue(s.wereadSkillVersion).onChange(bind('wereadSkillVersion', (v) => v.trim())));
 
-    containerEl.createEl('h3', { text: '新建读书笔记（微信读书源）' });
+    containerEl.createEl('h3', { text: '新建读书笔记' });
     new Setting(containerEl)
       .setName('笔记模板路径')
       .setDesc('模板里的 {{title}} {{author}} {{publisher}} {{score}} 等变量会被微信读书数据替换')
       .addText((t) => t.setValue(s.bookNoteTemplate).onChange(bind('bookNoteTemplate', (v) => v.trim())));
     new Setting(containerEl)
       .setName('笔记输出目录')
-      .setDesc('生成的《书名》.md 放在这个目录（已存在同名笔记时不覆盖）')
+      .setDesc('生成的《书名》.md 放在这个目录；同名笔记不覆盖')
       .addText((t) => t.setValue(s.bookNotesFolder).onChange(bind('bookNotesFolder', (v) => v.trim())));
 
     containerEl.createEl('h3', { text: 'EPUB 阅读器' });
@@ -1614,7 +1614,7 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       .addSlider((sl) => sl.setLimits(12, 26, 1).setValue(Math.round(s.epubLineHeight * 10)).setDynamicTooltip().onChange(bind('epubLineHeight', (v) => Number(v) / 10)));
     new Setting(containerEl)
       .setName('记住阅读位置')
-      .setDesc('按书记住读到第几章（存在插件设置里，最多 80 本）')
+      .setDesc('按书记住读到的章节，最多 80 本')
       .addToggle((t) => t.setValue(!!s.rememberPosition).onChange(bind('rememberPosition')));
 
     containerEl.createEl('h3', { text: '关于' });
@@ -1622,7 +1622,7 @@ class SimpleReadingSettingTab extends PluginSettingTab {
       cls: 'setting-item-description',
       text:
         'PDF 用 Obsidian 自带阅读器，本插件只读取你的选区；EPUB 用内置的极简阅读器（解压走浏览器自带的 DecompressionStream，零依赖）。' +
-        '原 PDF / EPUB 一个字节都不改 —— 划线、高亮、想法全部以 Markdown 文本写进同名读书笔记，随时可删，插件可随时卸载。' +
+        '原 PDF / EPUB 一个字节都不改 —— 划线、高亮、想法全部以 Markdown 文本写进读书笔记，随时可删，插件可随时卸载。' +
         'EPUB 视图里选中文字后右键，可直接摘录 / 记录想法 / 复制为引用（和 PDF 那边的右键一致）。',
     });
     containerEl.createEl('p', {
